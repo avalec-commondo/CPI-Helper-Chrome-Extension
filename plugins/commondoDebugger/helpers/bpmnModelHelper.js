@@ -5,7 +5,6 @@
 // resolves externalized parameters.prop, and maps ProcessDirect channels.
 // Fully compatible with both SAP Neo and SAP BTP Cloud Foundry / Integration Suite.
 
-const iflowStepNameCache = new Map();
 const iflowBpmnModelCache = new Map();
 
 const CmdBpmnModelHelper = {
@@ -345,3 +344,9 @@ const CmdBpmnModelHelper = {
     return result;
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdBpmnModelHelper = CmdBpmnModelHelper;
+}
+

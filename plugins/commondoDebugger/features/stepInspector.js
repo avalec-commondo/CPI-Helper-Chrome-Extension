@@ -160,3 +160,9 @@ const CmdStepInspector = {
     }
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdStepInspector = CmdStepInspector;
+}
+

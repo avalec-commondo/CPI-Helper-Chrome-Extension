@@ -342,8 +342,9 @@ const CmdCpiApiHelper = {
   },
 };
 
-// Global export fallback so any script can call getApiUrl and parseMs
+// Expose to window namespace
 if (typeof window !== "undefined") {
+  window.CmdCpiApiHelper = CmdCpiApiHelper;
   window.getApiUrl = CmdCpiApiHelper.getApiUrl;
   window.parseMs = CmdCpiApiHelper.parseMs;
 }

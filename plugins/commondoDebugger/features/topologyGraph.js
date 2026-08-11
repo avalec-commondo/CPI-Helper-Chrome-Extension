@@ -356,3 +356,9 @@ const CmdTopologyGraph = {
     setTransform();
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdTopologyGraph = CmdTopologyGraph;
+}
+

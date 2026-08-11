@@ -150,3 +150,9 @@ const CmdProcessDirectDiscovery = {
     console.log("%c==================== BFS TEST COMPLETE ====================", "color: #0070f3; font-weight: bold;");
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdProcessDirectDiscovery = CmdProcessDirectDiscovery;
+}
+

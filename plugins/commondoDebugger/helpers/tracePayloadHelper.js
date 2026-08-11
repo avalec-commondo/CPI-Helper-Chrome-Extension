@@ -43,3 +43,9 @@ const CmdTracePayloadHelper = {
     }
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdTracePayloadHelper = CmdTracePayloadHelper;
+}
+

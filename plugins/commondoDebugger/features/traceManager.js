@@ -95,3 +95,9 @@ const CmdTraceManager = {
     return results;
   },
 };
+
+// Expose to window namespace
+if (typeof window !== "undefined") {
+  window.CmdTraceManager = CmdTraceManager;
+}
+
