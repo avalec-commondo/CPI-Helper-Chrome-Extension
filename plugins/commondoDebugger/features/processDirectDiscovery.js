@@ -9,7 +9,7 @@ const CmdProcessDirectDiscovery = {
   /**
    * Builds the entire ProcessDirect topology graph starting from a root iFlow.
    */
-  async discoverProcessDirectTopology(rootFlowId, packageId = null) {
+  async discoverProcessDirectTopology(rootFlowId, packageId = null, isDebug = false) {
     const apiHelper = typeof CmdCpiApiHelper !== "undefined" ? CmdCpiApiHelper : {};
     const bpmnHelper = typeof CmdBpmnModelHelper !== "undefined" ? CmdBpmnModelHelper : {};
 
@@ -17,16 +17,28 @@ const CmdProcessDirectDiscovery = {
     const packageFlows = await apiHelper.fetchPackageArtifacts(pkgId);
     const iFlowsOnly = packageFlows.filter((a) => a.type === "IFlow" || !a.type);
 
+    if (isDebug) {
+      console.log(`[PD Discovery] Found ${iFlowsOnly.length} iFlow artifacts in package '${pkgId}'`);
+    }
+
     // 1. Build Inbound Endpoint Registry
     const endpointToIFlowMap = new Map();
+    const endpointRegistry = [];
+
     for (const flow of iFlowsOnly) {
       const model = await bpmnHelper.fetchIFlowBpmnModel(flow.id, pkgId);
       model.inbound.forEach((inChan) => {
         if (inChan.address) {
           const norm = inChan.address.trim().toLowerCase();
           endpointToIFlowMap.set(norm, flow.id);
+          endpointRegistry.push({ flowId: flow.id, address: inChan.address, normalized: norm });
         }
       });
+    }
+
+    if (isDebug) {
+      console.log("[PD Discovery] Inbound Endpoint Registry:");
+      console.table(endpointRegistry);
     }
 
     // 2. BFS Queue Traversal
@@ -51,19 +63,35 @@ const CmdProcessDirectDiscovery = {
         totalBpmnSteps: Object.keys(model.steps).length,
       });
 
+      if (isDebug) {
+        console.group(`[PD Discovery] Inspecting Flow (Level ${currLevel}): ${currFlow}`);
+        console.log("Inbound endpoints:", model.inbound);
+        console.log("Outbound channels:", model.outbound);
+      }
+
       for (const outChan of model.outbound) {
         const rawAddress = (outChan.address || "").trim();
         const normTarget = rawAddress.toLowerCase();
         let targetFlow = endpointToIFlowMap.get(normTarget);
+        let matchReason = "Exact Match";
 
         // Dynamic property expression resolution (e.g. /${property.reportId} or ${header.endpoint})
         if (!targetFlow && (normTarget.includes("${property.") || normTarget.includes("${header.") || normTarget.includes("{{"))) {
+          matchReason = "Dynamic Expression Resolution";
           for (const [inEndpoint, fId] of endpointToIFlowMap.entries()) {
             const cleanRoot = rootFlowId.replace(/scheduler_|schedule_|_manual_start|manual_start/gi, "").replace(/^[_\-]+|[_\-]+$/g, "").toLowerCase();
             if (cleanRoot && (fId.toLowerCase().includes(cleanRoot) || inEndpoint.includes(cleanRoot))) {
               targetFlow = fId;
               break;
             }
+          }
+        }
+
+        if (isDebug) {
+          if (targetFlow) {
+            console.log(`  ✔ Outbound [${rawAddress}] -> ${targetFlow} (${matchReason})`);
+          } else {
+            console.warn(`  ✖ Outbound [${rawAddress}] -> No matching flow in package endpoint registry`);
           }
         }
 
@@ -82,6 +110,10 @@ const CmdProcessDirectDiscovery = {
             queue.push({ flowId: targetFlow, level: currLevel + 1 });
           }
         }
+      }
+
+      if (isDebug) {
+        console.groupEnd();
       }
     }
 
@@ -132,7 +164,7 @@ const CmdProcessDirectDiscovery = {
     console.groupEnd();
 
     console.group("%c 2. DISCOVERING RECURSIVE TOPOLOGY ", "color: #f59e0b; font-weight: bold;");
-    const topology = await CmdProcessDirectDiscovery.discoverProcessDirectTopology(rootFlowId, pkgId);
+    const topology = await CmdProcessDirectDiscovery.discoverProcessDirectTopology(rootFlowId, pkgId, true);
     console.groupEnd();
 
     console.group("%c 3. TOPOLOGY & TREE OUTPUT ", "color: #06b6d4; font-weight: bold;");
@@ -155,4 +187,3 @@ const CmdProcessDirectDiscovery = {
 if (typeof window !== "undefined") {
   window.CmdProcessDirectDiscovery = CmdProcessDirectDiscovery;
 }
-

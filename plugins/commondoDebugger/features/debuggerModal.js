@@ -49,7 +49,7 @@ const CmdDebuggerModal = {
         statusMsg.innerHTML = `
           <span style="font-size: 0.8rem; font-weight: 600; color: #475569;">TRACE Active:</span>
           <span style="display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; color: #065f46; border: 1px solid #a7f3d0; border-radius: 12px; padding: 3px 10px; font-family: monospace; font-size: 0.85rem; font-weight: bold;">
-            <i class="clock outline icon" style="margin: 0; color: #059669;"></i> ${formatted}
+            <span>⏱</span> ${formatted}
           </span>
         `;
       } else {
@@ -115,20 +115,22 @@ const CmdDebuggerModal = {
       modal = document.createElement("div");
       modal.id = "cmd-debugger-modal";
       modal.className = "ui modal";
-      modal.style.cssText = "width: 94vw !important; max-width: 1550px !important; border-radius: 8px; overflow: hidden;";
+      modal.style.cssText = "width: 94vw !important; max-width: 1550px !important; border-radius: 8px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;";
 
       modal.innerHTML = `
         <!-- Modal Header -->
         <div class="header" style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; padding: 12px 20px; border-bottom: 1px solid #e2e8f0;">
           <div style="display: flex; align-items: center; gap: 10px;">
-            <i class="sitemap icon" style="color: #0284c7; font-size: 1.2rem; margin: 0;"></i>
             <span style="font-size: 1.15rem; font-weight: bold; color: #1e293b;">Commondo IS Trace Graph</span>
           </div>
           <div style="display: flex; align-items: center; gap: 10px;">
-            <button id="cmd-modal-export-zip-btn" class="ui mini teal button" title="Download all trace payloads as a ZIP package">
-              <i class="download icon"></i> Export Traces (ZIP)
+            <button id="cmd-modal-test-pd-btn" class="ui mini blue basic button" title="Run diagnostic ProcessDirect discovery test in Console" style="padding: 6px 10px; font-size: 0.8rem;">
+              Test PD Discovery
             </button>
-            <i class="close icon cmd-modal-close" style="cursor: pointer; font-size: 1.2rem; color: #64748b;"></i>
+            <button id="cmd-modal-export-zip-btn" class="ui mini teal button" title="Download all trace payloads as a ZIP package" style="padding: 6px 10px; font-size: 0.8rem;">
+              Export Traces (ZIP)
+            </button>
+            <span class="cmd-modal-close" style="cursor: pointer; font-size: 1.5rem; font-weight: bold; color: #64748b; line-height: 1; padding: 0 4px;" title="Close">&times;</span>
           </div>
         </div>
 
@@ -140,13 +142,13 @@ const CmdDebuggerModal = {
             <!-- Left: Global Execution Run Selector -->
             <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 320px;">
               <span style="font-weight: 600; color: #334155; font-size: 0.85rem; white-space: nowrap;">
-                <i class="history icon" style="color: #64748b;"></i> Global Run Instance:
+                Global Run Instance:
               </span>
               <select id="cmd-global-run-select" class="ui compact dropdown" style="padding: 6px 10px; font-size: 0.85rem; border-radius: 4px; border: 1px solid #cbd5e1; flex: 1; max-width: 480px;">
                 <option value="">Loading execution runs...</option>
               </select>
-              <button id="cmd-global-run-refresh-btn" class="ui mini icon basic button" title="Refresh execution logs">
-                <i class="sync alternate icon"></i>
+              <button id="cmd-global-run-refresh-btn" class="ui mini basic button" title="Refresh execution logs" style="padding: 6px 10px; font-size: 0.85rem;">
+                ↻
               </button>
             </div>
 
@@ -224,6 +226,12 @@ const CmdDebuggerModal = {
       };
 
       // Export ZIP button
+      modal.querySelector("#cmd-modal-test-pd-btn").onclick = async () => {
+        if (typeof CmdProcessDirectDiscovery !== "undefined" && CmdProcessDirectDiscovery.runProcessDirectDiscoveryTest) {
+          await CmdProcessDirectDiscovery.runProcessDirectDiscoveryTest();
+        }
+      };
+
       modal.querySelector("#cmd-modal-export-zip-btn").onclick = async () => {
         if (typeof CmdZipExportHelper !== "undefined") {
           const allLogs = Object.values(CmdDebuggerModal.state.logsByFlowId).flat();

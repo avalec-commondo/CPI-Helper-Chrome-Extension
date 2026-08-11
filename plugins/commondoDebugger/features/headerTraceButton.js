@@ -93,11 +93,11 @@ const CmdHeaderTraceButton = {
     timerBadge.id = "__commondo_header_trace_timer";
     timerBadge.title = "TRACE remaining active time (10 min keep-alive)";
     timerBadge.style.cssText = "display: none; align-items: center; gap: 4px; padding: 3px 8px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 4px; color: #065f46; font-family: monospace; font-size: 0.8rem; font-weight: bold; line-height: 1.2;";
-    timerBadge.innerHTML = `<i class="clock outline icon" style="margin: 0; color: #059669; font-size: 0.85rem;"></i> <span id="__commondo_header_timer_text">10:00</span>`;
+    timerBadge.innerHTML = `<span>⏱</span> <span id="__commondo_header_timer_text">10:00</span>`;
 
     const traceBtn = document.createElement("button");
     traceBtn.id = "__commondo_trace_all_header_btn";
-    traceBtn.title = "Auto-activate TRACE on Root + ProcessDirect Children";
+    traceBtn.title = "Open Multi-Select Trace Manager";
     traceBtn.className = "sapMBtn sapMBtnBase spcHeaderActionButton";
     traceBtn.style.cssText = "display: inline-block; margin: 0;";
     traceBtn.innerHTML = `
@@ -109,33 +109,10 @@ const CmdHeaderTraceButton = {
     `;
 
     traceBtn.onclick = async () => {
-      const btnText = document.getElementById("__commondo_trace_btn_text");
-      if (btnText) btnText.innerHTML = `<i class="spinner loading icon" style="font-size: 0.85rem; margin-right: 4px;"></i>Activating...`;
-
-      let successFlows = [];
-      let totalCount = 0;
-
-      try {
-        if (typeof CmdTraceManager !== "undefined") {
-          const results = await CmdTraceManager.bulkActivateLogLevel("topology", "TRACE");
-          totalCount = results.length;
-          successFlows = results.filter((r) => r.success).map((r) => r.iflowId);
-        }
-      } catch (e) {
-        console.warn("Failed auto-activating trace on header button click:", e);
-      } finally {
-        if (btnText) btnText.innerHTML = `Trace IFlows`;
-      }
-
-      const now = Date.now();
-      CmdHeaderTraceButton.updateHeaderTraceTimer(now);
-
-      // Pop up info message toast listing all activated iFlows
-      const flowList = successFlows.length > 0 ? successFlows.map((f) => `• <b>${f}</b>`).join("<br/>") : "<i>No flows activated</i>";
-      const toastMsg = `<div style="font-size: 0.85rem; line-height: 1.5;">${flowList}</div>`;
-
-      if (typeof showToast === "function") {
-        showToast(toastMsg, `Activated TRACE on ${successFlows.length}/${totalCount || 1} iFlows`, successFlows.length > 0 ? "success" : "warning");
+      if (typeof CmdTraceManager !== "undefined" && CmdTraceManager.openTraceManagerModal) {
+        await CmdTraceManager.openTraceManagerModal();
+      } else if (typeof window.openTraceManagerModal === "function") {
+        await window.openTraceManagerModal();
       }
     };
 

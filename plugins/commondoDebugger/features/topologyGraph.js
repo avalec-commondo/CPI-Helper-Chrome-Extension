@@ -2,12 +2,12 @@
 // COMMODNO IS DEBUGGER - TOPOLOGY GRAPH FEATURE
 // ===========================================================================
 // Renders the interactive SVG Directional Topology Map (DAG) driven by BPMN
-// ProcessDirect discovery, with directional arrows, endpoint address labels,
-// multi-run instance badges, and smooth pan/zoom controls.
+// ProcessDirect discovery, with top-to-bottom layout, directional arrows,
+// endpoint address labels, multi-run instance badges, and smooth pan/zoom controls.
 
 const CmdTopologyGraph = {
   /**
-   * Renders the interactive SVG Directional Topology Graph.
+   * Renders the interactive SVG Directional Topology Graph (Top-to-Bottom).
    * @param {HTMLElement} container - DOM container element.
    * @param {Object} topologyData - { nodes, edges, levels } from CmdProcessDirectDiscovery.
    * @param {Object} logsByFlowId - Map of flow ID to array of message logs in current run chain.
@@ -29,7 +29,7 @@ const CmdTopologyGraph = {
     const payloadHelper = typeof CmdTracePayloadHelper !== "undefined" ? CmdTracePayloadHelper : {};
     const escapeHtml = payloadHelper.escapeHtml || ((s) => s || "");
 
-    // Group nodes into columns by hierarchical level
+    // 1. Group nodes into tiers/rows by hierarchical level
     const levelNodesMap = {};
     nodes.forEach((node) => {
       const lvl = node.level !== undefined ? node.level : 0;
@@ -40,21 +40,29 @@ const CmdTopologyGraph = {
     const levelKeys = Object.keys(levelNodesMap).map(Number).sort((a, b) => a - b);
     if (levelKeys.length === 0) levelKeys.push(0);
 
-    const nodeWidth = 240;
+    const nodeWidth = 260;
     const nodeHeight = 74;
-    const colSpacing = 360;
-    const rowSpacing = 110;
-    const paddingX = 40;
-    const paddingY = 50;
+    const nodeSpacingX = 320;
+    const levelSpacingY = 160;
+    const paddingX = 60;
+    const paddingY = 40;
+
+    const maxNodesInAnyLevel = Math.max(...levelKeys.map((k) => levelNodesMap[k].length), 1);
+    const maxRowWidth = (maxNodesInAnyLevel - 1) * nodeSpacingX + nodeWidth;
 
     const posMap = {};
 
+    // 2. Position nodes (Centered top-to-bottom tree layout)
     levelKeys.forEach((lvl) => {
       const nodesAtLevel = levelNodesMap[lvl];
+      const count = nodesAtLevel.length;
+      const rowWidth = (count - 1) * nodeSpacingX + nodeWidth;
+      const rowStartX = paddingX + Math.max(0, (maxRowWidth - rowWidth) / 2);
+
       nodesAtLevel.forEach((node, idx) => {
         posMap[node.id] = {
-          x: paddingX + lvl * colSpacing,
-          y: paddingY + idx * rowSpacing,
+          x: rowStartX + idx * nodeSpacingX,
+          y: paddingY + lvl * levelSpacingY,
           node: node,
         };
       });
@@ -66,11 +74,11 @@ const CmdTopologyGraph = {
 
     // Toolbar Controls
     const toolbar = document.createElement("div");
-    toolbar.style.cssText = "position: absolute; top: 10px; right: 10px; z-index: 10; display: flex; gap: 6px; background: rgba(255,255,255,0.95); padding: 4px 6px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid #e2e8f0;";
+    toolbar.style.cssText = "position: absolute; top: 12px; right: 12px; z-index: 10; display: flex; gap: 4px; background: rgba(255,255,255,0.95); padding: 4px 6px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid #e2e8f0;";
     toolbar.innerHTML = `
-      <button id="cmd-zoom-in" class="ui mini icon button" title="Zoom In"><i class="plus icon"></i></button>
-      <button id="cmd-zoom-out" class="ui mini icon button" title="Zoom Out"><i class="minus icon"></i></button>
-      <button id="cmd-zoom-reset" class="ui mini icon button" title="Reset View"><i class="expand icon"></i></button>
+      <button id="cmd-zoom-in" class="ui mini button" title="Zoom In" style="padding: 4px 8px; font-weight: bold; margin: 0;">+</button>
+      <button id="cmd-zoom-out" class="ui mini button" title="Zoom Out" style="padding: 4px 8px; font-weight: bold; margin: 0;">-</button>
+      <button id="cmd-zoom-reset" class="ui mini button" title="Reset View" style="padding: 4px 8px; font-size: 0.75rem; margin: 0;">Fit</button>
     `;
     mapWrapper.appendChild(toolbar);
 
@@ -82,7 +90,7 @@ const CmdTopologyGraph = {
 
     const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
     defs.innerHTML = `
-      <marker id="cmd-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+      <marker id="cmd-arrow-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#0284c7"/>
       </marker>
     `;
@@ -94,9 +102,9 @@ const CmdTopologyGraph = {
     container.appendChild(mapWrapper);
 
     // Pan & Zoom State
-    let scale = 1;
-    let pointX = 0;
-    let pointY = 0;
+    let scale = 0.95;
+    let pointX = 20;
+    let pointY = 15;
     let isPanning = false;
     let startX = 0;
     let startY = 0;
@@ -134,49 +142,54 @@ const CmdTopologyGraph = {
 
     svg.onwheel = (e) => {
       e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      scale = Math.min(Math.max(0.4, scale + delta), 2.5);
+      const delta = e.deltaY > 0 ? -0.08 : 0.08;
+      scale = Math.min(Math.max(0.35, scale + delta), 2.5);
       setTransform();
     };
 
     toolbar.querySelector("#cmd-zoom-in").onclick = () => { scale = Math.min(scale + 0.15, 2.5); setTransform(); };
-    toolbar.querySelector("#cmd-zoom-out").onclick = () => { scale = Math.max(scale - 0.15, 0.4); setTransform(); };
-    toolbar.querySelector("#cmd-zoom-reset").onclick = () => { scale = 1; pointX = 0; pointY = 0; setTransform(); };
+    toolbar.querySelector("#cmd-zoom-out").onclick = () => { scale = Math.max(scale - 0.15, 0.35); setTransform(); };
+    toolbar.querySelector("#cmd-zoom-reset").onclick = () => { scale = 0.95; pointX = 20; pointY = 15; setTransform(); };
 
-    // 1. Draw Connecting Directional Bézier Curves with ProcessDirect Endpoint Labels
+    // 3. Draw Connecting Directional Curves (Top to Bottom) with ProcessDirect Endpoint Labels
     edges.forEach((edge) => {
       const fromPos = posMap[edge.from];
       const toPos = posMap[edge.to];
       if (fromPos && toPos) {
-        const x1 = fromPos.x + nodeWidth;
-        const y1 = fromPos.y + nodeHeight / 2;
-        const x2 = toPos.x;
-        const y2 = toPos.y + nodeHeight / 2;
-        const midX = (x1 + x2) / 2;
-        const midY = (y1 + y2) / 2;
+        // Start from bottom-center of parent node
+        const x1 = fromPos.x + nodeWidth / 2;
+        const y1 = fromPos.y + nodeHeight;
 
-        // Path
+        // End at top-center of child node
+        const x2 = toPos.x + nodeWidth / 2;
+        const y2 = toPos.y;
+
+        const midY = (y1 + y2) / 2;
+        const midX = (x1 + x2) / 2;
+
+        // Smooth vertical descending Bézier curve
         const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", `M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2} ${y2}`);
+        path.setAttribute("d", `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
         path.setAttribute("fill", "none");
         path.setAttribute("stroke", "#0284c7");
-        path.setAttribute("stroke-width", "2.5");
-        path.setAttribute("marker-end", "url(#cmd-arrow)");
+        path.setAttribute("stroke-width", "2.2");
+        path.setAttribute("marker-end", "url(#cmd-arrow-down)");
         g.appendChild(path);
 
         // ProcessDirect Endpoint Label Pill
         if (edge.address) {
           let labelText = edge.address;
-          if (labelText.length > 24) labelText = labelText.substring(0, 22) + "..";
+          if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
 
           const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-          const pillWidth = Math.max(60, labelText.length * 7 + 16);
-          const pillHeight = 20;
+          const pillWidth = Math.max(70, labelText.length * 6.8 + 18);
+          const pillHeight = 22;
 
           edgeG.innerHTML = `
-            <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="10"
-                  fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 2px rgba(0,0,0,0.1))"/>
-            <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10px" font-weight="600" fill="#0369a1">
+            <title>${escapeHtml(edge.address)}</title>
+            <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
+                  fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
+            <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
               ${escapeHtml(labelText)}
             </text>
           `;
@@ -185,9 +198,7 @@ const CmdTopologyGraph = {
       }
     });
 
-
-
-    // 3. Draw Nodes
+    // 4. Draw Nodes
     Object.values(posMap).forEach((pos) => {
       const node = pos.node;
       const flowId = node.id;
@@ -206,7 +217,7 @@ const CmdTopologyGraph = {
       else if (status.match(/^(RETRY|ESCALATED|CANCELLED)$/)) statusColor = "#f59e0b";
 
       let rawName = flowId;
-      if (rawName.length > 24) rawName = rawName.substring(0, 22) + "..";
+      if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
       const displayName = escapeHtml(rawName);
 
       const nodeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -215,21 +226,22 @@ const CmdTopologyGraph = {
 
       // Multi-run badge pill if logs.length > 1 (e.g. Iterator/Splitter call)
       const multiRunBadge = logs.length > 1
-        ? `<rect x="${pos.x + nodeWidth - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
-           <text x="${pos.x + nodeWidth - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
+        ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+           <text x="${pos.x + nodeWidth - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
         : (isRoot
             ? `<rect x="${pos.x + nodeWidth - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
                <text x="${pos.x + nodeWidth - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
             : "");
 
       nodeG.innerHTML = `
+        <title>${escapeHtml(flowId)}</title>
         <rect x="${pos.x}" y="${pos.y}" width="${nodeWidth}" height="${nodeHeight}" rx="8"
               fill="${isSelected ? "#f0fdf4" : "#ffffff"}"
               stroke="${isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
               stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
-              filter="drop-shadow(0 2px 5px rgba(0,0,0,0.06))" />
+              filter="drop-shadow(0 2px 6px rgba(0,0,0,0.06))" />
         <rect x="${pos.x}" y="${pos.y}" width="6" height="${nodeHeight}" rx="3" fill="${statusColor}" />
-        <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="13px" font-weight="bold" fill="#1e293b">
+        <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="#1e293b">
           ${displayName}
         </text>
         <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="#64748b">
