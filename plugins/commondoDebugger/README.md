@@ -11,7 +11,7 @@ The plugin is structured into distinct, modular layers. Each module is declared 
 ```text
 plugins/commondoDebugger/
 ├── README.md                                 # Technical documentation & API references
-├── commondoDebugger.js                       # Main coordinator, plugin registration & modal UI
+├── commondoDebugger.js                       # Main plugin entry point & coordinator
 ├── helpers/                                  # Reusable core utilities & API layers
 │   ├── cpiApiHelper.js                       # Namespace: CmdCpiApiHelper
 │   ├── bpmnModelHelper.js                    # Namespace: CmdBpmnModelHelper
@@ -21,7 +21,9 @@ plugins/commondoDebugger/
     ├── processDirectDiscovery.js             # Namespace: CmdProcessDirectDiscovery
     ├── traceManager.js                       # Namespace: CmdTraceManager
     ├── topologyGraph.js                      # Namespace: CmdTopologyGraph
-    └── stepInspector.js                      # Namespace: CmdStepInspector
+    ├── stepInspector.js                      # Namespace: CmdStepInspector
+    ├── debuggerModal.js                      # Namespace: CmdDebuggerModal
+    └── headerTraceButton.js                  # Namespace: CmdHeaderTraceButton
 ```
 
 ### Module Namespace Mapping
@@ -36,7 +38,9 @@ plugins/commondoDebugger/
 | `features/traceManager.js` | `const CmdTraceManager` | `window.CmdTraceManager` | Bulk TRACE log level activator (`topology`, `package`, `current`, `all`) and CPI-Helper Red Button storage synchronizer. |
 | `features/topologyGraph.js` | `const CmdTopologyGraph` | `window.CmdTopologyGraph` | Strict interval containment call tree builder, SVG Multi-Column Map renderer, pan/zoom canvas controls. |
 | `features/stepInspector.js` | `const CmdStepInspector` | `window.CmdStepInspector` | Execution step list (#106 To Fiori Structure), activity badges, properties/headers/body payload fetcher. |
-| `commondoDebugger.js` | Main Coordinator | `pluginList.push(plugin)` | Plugin lifecycle, UI modal assembly, header button injector, event dispatcher. |
+| `features/debuggerModal.js` | `const CmdDebuggerModal` | `window.CmdDebuggerModal`<br>`window.openDebuggerModal` | Modal assembly, correlation log loading, timeline synchronizer, countdown timer. |
+| `features/headerTraceButton.js` | `const CmdHeaderTraceButton` | `window.CmdHeaderTraceButton` | UI5 header button injection, auto-activation of root+children, toast feedback, header timer. |
+| `commondoDebugger.js` | Main Coordinator | `pluginList.push(plugin)` | Plugin lifecycle and registration with CPI-Helper. |
 
 ---
 
@@ -278,4 +282,6 @@ if (typeof window !== "undefined") {
 6. `features/traceManager.js`
 7. `features/topologyGraph.js`
 8. `features/stepInspector.js`
-9. `commondoDebugger.js`
+9. `features/debuggerModal.js`
+10. `features/headerTraceButton.js`
+11. `commondoDebugger.js`

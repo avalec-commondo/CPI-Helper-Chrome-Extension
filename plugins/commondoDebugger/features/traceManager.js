@@ -12,34 +12,47 @@ const CmdTraceManager = {
     if (!iflowId) return false;
 
     try {
-      const isNeo = (typeof cpiData !== "undefined" && cpiData.cpiPlatform === "neo") || window.location.host.includes("hana.ondemand.com");
-      const selectedRuntimeLocation = typeof cpiData !== "undefined" && cpiData.runtimeLocationId && !isNeo ? cpiData.runtimeLocationId : "";
-      const locID = selectedRuntimeLocation ? `, "runtimeLocationId":"${selectedRuntimeLocation}"` : "";
-      const urlExt = typeof cpiData !== "undefined" && cpiData.urlExtension ? cpiData.urlExtension : "";
-      const commandUrl = "/" + urlExt + "Operations/com.sap.it.op.tmn.commands.dashboard.webui.IntegrationComponentSetMplLogLevelCommand";
-      const payload = `{"artifactSymbolicName":"${iflowId}","mplLogLevel":"${logLevel}","nodeType":"IFLMAP"${locID}}`;
-
       let ok = false;
-      try {
-        const rawRes = await makeCallPromise("POST", commandUrl, false, null, payload, true, "application/json;charset=UTF-8");
-        if (rawRes) ok = true;
-      } catch (errPost) {
-        const getApi = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getApiUrl) ? CmdCpiApiHelper.getApiUrl : window.getApiUrl;
-        const putUrl = getApi(`IntegrationRuntimeArtifacts('${encodeURIComponent(iflowId)}')`);
-        await makeCallPromise("PUT", putUrl, true, JSON.stringify({ LogLevel: logLevel }), { "Content-Type": "application/json" });
-        ok = true;
+
+      // 1. Primary: Reuse CPI Helper's native setLogLevel function
+      if (typeof setLogLevel === "function") {
+        try {
+          await setLogLevel(logLevel, iflowId);
+          ok = true;
+        } catch (eSet) {
+          console.warn(`Native setLogLevel failed for ${iflowId}, falling back to command API:`, eSet);
+        }
       }
 
-      // Synchronize red button state in storage
+      // 2. Fallback: Direct command/OData invocation if native function is unavailable or failed
+      if (!ok) {
+        const isNeo = (typeof cpiData !== "undefined" && cpiData.cpiPlatform === "neo") || window.location.host.includes("hana.ondemand.com");
+        const selectedRuntimeLocation = typeof cpiData !== "undefined" && cpiData.runtimeLocationId && !isNeo ? cpiData.runtimeLocationId : "";
+        const locID = selectedRuntimeLocation ? `, "runtimeLocationId":"${selectedRuntimeLocation}"` : "";
+        const urlExt = typeof cpiData !== "undefined" && cpiData.urlExtension ? cpiData.urlExtension : "";
+        const commandUrl = "/" + urlExt + "Operations/com.sap.it.op.tmn.commands.dashboard.webui.IntegrationComponentSetMplLogLevelCommand";
+        const payload = `{"artifactSymbolicName":"${iflowId}","mplLogLevel":"${logLevel}","nodeType":"IFLMAP"${locID}}`;
+
+        try {
+          const rawRes = await makeCallPromise("POST", commandUrl, false, null, payload, true, "application/json;charset=UTF-8");
+          if (rawRes) ok = true;
+        } catch (errPost) {
+          const getApi = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getApiUrl) ? CmdCpiApiHelper.getApiUrl : window.getApiUrl;
+          const putUrl = getApi(`IntegrationRuntimeArtifacts('${encodeURIComponent(iflowId)}')`);
+          await makeCallPromise("PUT", putUrl, true, JSON.stringify({ LogLevel: logLevel }), { "Content-Type": "application/json" });
+          ok = true;
+        }
+      }
+
+      // 3. Synchronize red button keep-alive state in storage via CPI Helper's storageSetPromise
       if (ok && logLevel === "TRACE") {
         const currentLocId = typeof cpiData !== "undefined" && cpiData.runtimeLocationId ? cpiData.runtimeLocationId : "cloudintegration";
         const nowStr = Date.now().toString();
-        const keysToSet = {};
-        keysToSet[`${iflowId}_powertraceLastRefresh`] = nowStr;
-        keysToSet[`${iflowId}_${currentLocId}_powertraceLastRefresh`] = nowStr;
-        keysToSet[`${iflowId}_cloudintegration_powertraceLastRefresh`] = nowStr;
-        keysToSet[`${iflowId}__powertraceLastRefresh`] = nowStr;
-        keysToSet[`${iflowId}_undefined_powertraceLastRefresh`] = nowStr;
+        const keysToSet = {
+          [`${iflowId}_powertraceLastRefresh`]: nowStr,
+          [`${iflowId}_${currentLocId}_powertraceLastRefresh`]: nowStr,
+          [`${iflowId}_cloudintegration_powertraceLastRefresh`]: nowStr,
+        };
 
         if (typeof storageSetPromise === "function") {
           await storageSetPromise(keysToSet);

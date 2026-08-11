@@ -76,6 +76,8 @@
         "/plugins/commondoDebugger/features/traceManager.js",
         "/plugins/commondoDebugger/features/topologyGraph.js",
         "/plugins/commondoDebugger/features/stepInspector.js",
+        "/plugins/commondoDebugger/features/debuggerModal.js",
+        "/plugins/commondoDebugger/features/headerTraceButton.js",
         "/plugins/commondoDebugger/commondoDebugger.js",
         "/plugins/traceModifer.js",
         "/plugins/groovyDebugger.js",
