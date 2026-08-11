@@ -225,10 +225,9 @@ const CmdDebuggerModal = {
         await CmdDebuggerModal.reloadAllRunsAndTopology(runInfo);
       };
 
-      // Export ZIP button
       modal.querySelector("#cmd-modal-test-pd-btn").onclick = async () => {
         if (typeof CmdProcessDirectDiscovery !== "undefined" && CmdProcessDirectDiscovery.runProcessDirectDiscoveryTest) {
-          await CmdProcessDirectDiscovery.runProcessDirectDiscoveryTest();
+          await CmdProcessDirectDiscovery.runProcessDirectDiscoveryTest(CmdDebuggerModal.state.selectedRootRun, CmdDebuggerModal.state.packageId);
         }
       };
 
@@ -271,21 +270,7 @@ const CmdDebuggerModal = {
     const getApi = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getApiUrl) ? CmdCpiApiHelper.getApiUrl : window.getApiUrl;
     const rootFlow = this.state.rootFlowId;
 
-    // 1. Discover ProcessDirect Topology (Design-Time BPMN DAG)
-    try {
-      if (typeof CmdProcessDirectDiscovery !== "undefined" && CmdProcessDirectDiscovery.discoverProcessDirectTopology) {
-        this.state.topologyData = await CmdProcessDirectDiscovery.discoverProcessDirectTopology(rootFlow, this.state.packageId);
-      }
-    } catch (e) {
-      console.warn("Failed discovering ProcessDirect topology:", e);
-      this.state.topologyData = {
-        nodes: [{ id: rootFlow, level: 0 }],
-        edges: [],
-        levels: { [rootFlow]: 0 },
-      };
-    }
-
-    // 2. Fetch Recent Execution Runs for Root Flow
+    // 1. Fetch Recent Execution Runs for Root Flow
     let rootRuns = [];
     try {
       const filterClause = rootFlow ? `&$filter=IntegrationArtifact/Id eq '${encodeURIComponent(rootFlow)}'` : "";
@@ -299,7 +284,7 @@ const CmdDebuggerModal = {
 
     this.state.rootExecutionRuns = rootRuns;
 
-    // 3. Populate Global Run Dropdown
+    // 2. Populate Global Run Dropdown
     globalRunSelect.innerHTML = "";
     if (rootRuns.length === 0) {
       globalRunSelect.innerHTML = `<option value="">No recent execution runs found</option>`;
@@ -318,7 +303,7 @@ const CmdDebuggerModal = {
       });
     }
 
-    // 4. Select Initial Run & Load Correlated Logs
+    // 3. Select Initial Run & Load Correlated Logs
     let targetRun = rootRuns[0] || null;
     if (runInfo?.messageGuid) {
       const matched = rootRuns.find((r) => r.MessageGuid === runInfo.messageGuid);
@@ -330,7 +315,7 @@ const CmdDebuggerModal = {
   },
 
   /**
-   * Loads all correlated logs for the selected root run and updates graph and inspector.
+   * Loads all correlated logs for the selected root run and dynamically builds the runtime topology graph.
    */
   async loadCorrelationLogsAndRender(rootRun) {
     const mapContainer = document.querySelector("#cmd-topology-map-container");
@@ -338,10 +323,11 @@ const CmdDebuggerModal = {
 
     const getApi = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getApiUrl) ? CmdCpiApiHelper.getApiUrl : window.getApiUrl;
     const logsByFlowId = {};
+    let corrLogs = [];
 
     if (rootRun) {
       const rootFlowName = rootRun.IntegrationFlowName || rootRun.IntegrationArtifact?.Id || this.state.rootFlowId;
-      logsByFlowId[rootFlowName] = [rootRun];
+      corrLogs = [rootRun];
 
       // Fetch full correlation call-chain across tenant if CorrelationId exists
       if (rootRun.CorrelationId) {
@@ -349,22 +335,41 @@ const CmdDebuggerModal = {
           const corrUrl = getApi(`MessageProcessingLogs?$format=json&$filter=CorrelationId eq '${rootRun.CorrelationId}'&$orderby=LogStart`);
           const rawCorr = await makeCallPromise("GET", encodeURI(corrUrl), false);
           const corrRes = typeof rawCorr === "string" ? JSON.parse(rawCorr) : rawCorr;
-          const corrLogs = corrRes?.d?.results || [];
+          const fetchedLogs = corrRes?.d?.results || [];
 
-          corrLogs.forEach((log) => {
-            const flowId = log.IntegrationFlowName || log.IntegrationArtifact?.Id || "iFlow";
-            if (!logsByFlowId[flowId]) logsByFlowId[flowId] = [];
-            if (!logsByFlowId[flowId].some((l) => l.MessageGuid === log.MessageGuid)) {
-              logsByFlowId[flowId].push(log);
-            }
-          });
+          if (fetchedLogs.length > 0) {
+            corrLogs = fetchedLogs;
+          }
         } catch (e) {
           console.warn("Failed fetching correlation logs:", e);
         }
       }
+
+      corrLogs.forEach((log) => {
+        const flowId = log.IntegrationFlowName || log.IntegrationArtifact?.Id || "iFlow";
+        if (!logsByFlowId[flowId]) logsByFlowId[flowId] = [];
+        if (!logsByFlowId[flowId].some((l) => l.MessageGuid === log.MessageGuid)) {
+          logsByFlowId[flowId].push(log);
+        }
+      });
     }
 
     this.state.logsByFlowId = logsByFlowId;
+
+    // Dynamically build the exact correlation topology graph for this execution run
+    const rootFlow = this.state.rootFlowId || (rootRun?.IntegrationFlowName || rootRun?.IntegrationArtifact?.Id);
+    if (typeof CmdProcessDirectDiscovery !== "undefined" && CmdProcessDirectDiscovery.buildCorrelationTopology) {
+      try {
+        this.state.topologyData = await CmdProcessDirectDiscovery.buildCorrelationTopology(rootFlow, corrLogs, this.state.packageId);
+      } catch (eBuild) {
+        console.warn("Failed building correlation topology, falling back to basic:", eBuild);
+        this.state.topologyData = {
+          nodes: Object.keys(logsByFlowId).map((id, idx) => ({ id, level: idx === 0 ? 0 : 1, runCount: logsByFlowId[id].length })),
+          edges: [],
+          levels: {},
+        };
+      }
+    }
 
     // Auto-select root flow or first discovered node
     if (!this.state.selectedNodeId || !this.state.topologyData?.nodes?.some((n) => n.id === this.state.selectedNodeId)) {
