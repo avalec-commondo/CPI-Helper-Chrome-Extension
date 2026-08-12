@@ -37,12 +37,14 @@ const CmdTopologyGraph = {
       levelNodesMap[lvl].push(node);
     });
 
-    const levelKeys = Object.keys(levelNodesMap).map(Number).sort((a, b) => a - b);
+    const levelKeys = Object.keys(levelNodesMap)
+      .map(Number)
+      .sort((a, b) => a - b);
     if (levelKeys.length === 0) levelKeys.push(0);
 
     const nodeWidth = 260;
     const nodeHeight = 74;
-    const nodeSpacingX = 320;
+    const nodeSpacingX = 520;
     const levelSpacingY = 160;
     const paddingX = 60;
     const paddingY = 40;
@@ -74,7 +76,8 @@ const CmdTopologyGraph = {
 
     // Toolbar Controls
     const toolbar = document.createElement("div");
-    toolbar.style.cssText = "position: absolute; top: 12px; right: 12px; z-index: 10; display: flex; gap: 4px; background: rgba(255,255,255,0.95); padding: 4px 6px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid #e2e8f0;";
+    toolbar.style.cssText =
+      "position: absolute; top: 12px; right: 12px; z-index: 10; display: flex; gap: 4px; background: rgba(255,255,255,0.95); padding: 4px 6px; border-radius: 6px; box-shadow: 0 2px 8px rgba(0,0,0,0.12); border: 1px solid #e2e8f0;";
     toolbar.innerHTML = `
       <button id="cmd-zoom-in" class="ui mini button" title="Zoom In" style="padding: 4px 8px; font-weight: bold; margin: 0;">+</button>
       <button id="cmd-zoom-out" class="ui mini button" title="Zoom Out" style="padding: 4px 8px; font-weight: bold; margin: 0;">-</button>
@@ -147,9 +150,20 @@ const CmdTopologyGraph = {
       setTransform();
     };
 
-    toolbar.querySelector("#cmd-zoom-in").onclick = () => { scale = Math.min(scale + 0.15, 2.5); setTransform(); };
-    toolbar.querySelector("#cmd-zoom-out").onclick = () => { scale = Math.max(scale - 0.15, 0.35); setTransform(); };
-    toolbar.querySelector("#cmd-zoom-reset").onclick = () => { scale = 0.95; pointX = 20; pointY = 15; setTransform(); };
+    toolbar.querySelector("#cmd-zoom-in").onclick = () => {
+      scale = Math.min(scale + 0.15, 2.5);
+      setTransform();
+    };
+    toolbar.querySelector("#cmd-zoom-out").onclick = () => {
+      scale = Math.max(scale - 0.15, 0.35);
+      setTransform();
+    };
+    toolbar.querySelector("#cmd-zoom-reset").onclick = () => {
+      scale = 0.95;
+      pointX = 20;
+      pointY = 15;
+      setTransform();
+    };
 
     // 3. Draw Connecting Directional Curves (Top to Bottom) with ProcessDirect Endpoint Labels
     edges.forEach((edge) => {
@@ -209,7 +223,7 @@ const CmdTopologyGraph = {
       const isRoot = node.level === 0;
 
       // Status determination
-      let status = hasRuns ? (latestLog.Status || "COMPLETED") : "NO RUNS";
+      let status = hasRuns ? latestLog.Status || "COMPLETED" : "NO RUNS";
       let statusColor = "#94a3b8"; // Gray for no runs
       if (status === "COMPLETED") statusColor = "#10b981";
       else if (status === "FAILED") statusColor = "#ef4444";
@@ -225,13 +239,14 @@ const CmdTopologyGraph = {
       nodeG.style.cursor = "pointer";
 
       // Multi-run badge pill if logs.length > 1 (e.g. Iterator/Splitter call)
-      const multiRunBadge = logs.length > 1
-        ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+      const multiRunBadge =
+        logs.length > 1
+          ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
            <text x="${pos.x + nodeWidth - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
-        : (isRoot
+          : isRoot
             ? `<rect x="${pos.x + nodeWidth - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
                <text x="${pos.x + nodeWidth - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
-            : "");
+            : "";
 
       nodeG.innerHTML = `
         <title>${escapeHtml(flowId)}</title>
@@ -287,15 +302,9 @@ const CmdTopologyGraph = {
       logsByFlowId[id].push(l);
     });
 
-    this.renderDirectionalTopology(
-      container,
-      topologyData,
-      logsByFlowId,
-      selectedLog?.IntegrationFlowName || selectedLog?.IntegrationArtifact?.Id,
-      (nodeId, logsForNode) => {
-        if (onSelectLog && logsForNode.length > 0) onSelectLog(logsForNode[0]);
-      }
-    );
+    this.renderDirectionalTopology(container, topologyData, logsByFlowId, selectedLog?.IntegrationFlowName || selectedLog?.IntegrationArtifact?.Id, (nodeId, logsForNode) => {
+      if (onSelectLog && logsForNode.length > 0) onSelectLog(logsForNode[0]);
+    });
   },
 };
 
