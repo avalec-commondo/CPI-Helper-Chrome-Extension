@@ -264,6 +264,14 @@ const CmdDebuggerModal = {
     const globalRunSelect = document.querySelector("#cmd-global-run-select");
     if (!mapContainer || !globalRunSelect) return;
 
+    // Clear caches so new trace and updated flows generate a fresh graph
+    if (typeof CmdTracePayloadHelper !== "undefined" && CmdTracePayloadHelper.clearCache) {
+      CmdTracePayloadHelper.clearCache();
+    }
+    if (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.clearCache) {
+      CmdBpmnModelHelper.clearCache();
+    }
+
     mapContainer.innerHTML = `<div class="ui active centered inline loader" style="margin-top: 150px;"></div><div style="text-align: center; color: #666; margin-top: 10px;">Discovering ProcessDirect Topology...</div>`;
     globalRunSelect.innerHTML = `<option value="">Loading execution runs...</option>`;
 

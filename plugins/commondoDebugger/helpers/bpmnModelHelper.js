@@ -9,11 +9,18 @@ const iflowBpmnModelCache = new Map();
 
 const CmdBpmnModelHelper = {
   /**
+   * Clears the BPMN model cache for a fresh session or reload.
+   */
+  clearCache() {
+    iflowBpmnModelCache.clear();
+  },
+
+  /**
    * Downloads and parses the BPMN XML model and parameters.prop for any iFlow.
    */
-  async fetchIFlowBpmnModel(iflowId, passedPkgId = null) {
-    if (!iflowId) return { iflowId: "", outbound: [], inbound: [], steps: {} };
-    if (iflowBpmnModelCache.has(iflowId)) {
+  async fetchIFlowBpmnModel(iflowId, passedPkgId = null, forceRefresh = false) {
+    if (!iflowId) return { iflowId: "", outbound: [], inbound: [], steps: {}, paramMap: {} };
+    if (!forceRefresh && iflowBpmnModelCache.has(iflowId)) {
       return iflowBpmnModelCache.get(iflowId);
     }
 
@@ -21,27 +28,41 @@ const CmdBpmnModelHelper = {
     let paramMap = {};
 
     const apiHelper = typeof CmdCpiApiHelper !== "undefined" ? CmdCpiApiHelper : {};
-    const pkgName = passedPkgId || (await apiHelper.resolveCurrentPackageId(iflowId)) || "";
-    const urlExt = typeof cpiData !== "undefined" && cpiData.urlExtension ? cpiData.urlExtension : "";
-    const runtimeExt = typeof cpiData !== "undefined" && cpiData.runtimePathExtension ? cpiData.runtimePathExtension : "";
+    const isNeoTenant = apiHelper.isNeo ? apiHelper.isNeo() : false;
+    let pkgName = passedPkgId || "";
+    let artGuid = iflowId;
+    let wsGuid = pkgName;
 
     // Helper to download ZIP and extract BPMN XML + parameters.prop
     async function tryDownloadZip(url) {
+      if (!url) return null;
+      console.log(`%c[ZIP Download] Attempting: ${url}`, "color: #d97706;");
       try {
-        const xhr = new XMLHttpRequest();
-        xhr.open("GET", url, true);
-        xhr.responseType = "arraybuffer";
-        const buf = await new Promise((resolve, reject) => {
-          xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve(xhr.response) : reject(new Error(`HTTP ${xhr.status}`)));
-          xhr.onerror = () => reject(new Error("Network error"));
-          xhr.send();
-        });
+        let buf = null;
+        try {
+          const resp = await fetch(url, { method: "GET", credentials: "include" });
+          console.log(`[ZIP Download] HTTP ${resp.status} for ${url}`);
+          if (resp.ok) {
+            buf = await resp.arrayBuffer();
+          }
+        } catch (eFetch) {
+          console.warn(`[ZIP Download] fetch failed, trying XHR for ${url}:`, eFetch);
+          const xhr = new XMLHttpRequest();
+          xhr.open("GET", url, true);
+          xhr.responseType = "arraybuffer";
+          buf = await new Promise((resolve, reject) => {
+            xhr.onload = () => (xhr.status >= 200 && xhr.status < 300 ? resolve(xhr.response) : reject(new Error(`HTTP ${xhr.status}`)));
+            xhr.onerror = () => reject(new Error("Network error"));
+            xhr.send();
+          });
+        }
 
         if (buf && typeof JSZip !== "undefined") {
           const zip = await JSZip.loadAsync(buf);
+          console.log(`[ZIP Download] Extracted ZIP (${buf.byteLength} bytes). Contained files:`, Object.keys(zip.files));
 
-          // 1. Parse parameters.prop (externalized configuration parameters)
-          const propFile = Object.keys(zip.files).find((fn) => fn.endsWith("parameters.prop") || fn.includes("parameters.prop"));
+          // 1. Parse parameters.prop (key=value properties file)
+          const propFile = Object.keys(zip.files).find((fn) => fn.endsWith("/parameters.prop") || fn.endsWith("\\parameters.prop") || fn === "parameters.prop");
           if (propFile) {
             try {
               const propText = await zip.files[propFile].async("string");
@@ -57,47 +78,96 @@ const CmdBpmnModelHelper = {
                   }
                 }
               });
+              console.log(`%c[BPMN Model Helper] Parsed parameters.prop for "${iflowId}":`, "color: #10b981; font-weight: bold;", paramMap);
             } catch (eProp) {}
+          }
+
+          // Also inspect parameters.propdef (XML metadata) for defaults
+          const propDefFile = Object.keys(zip.files).find((fn) => fn.endsWith("parameters.propdef"));
+          if (propDefFile) {
+            try {
+              const defText = await zip.files[propDefFile].async("string");
+              const parser = new DOMParser();
+              const xmlDoc = parser.parseFromString(defText, "text/xml");
+              const paramEls = xmlDoc.getElementsByTagName("param");
+              for (let i = 0; i < paramEls.length; i++) {
+                const p = paramEls[i];
+                const id = p.getAttribute("id") || p.getAttribute("name");
+                const defVal = p.getAttribute("defaultValue") || p.getAttribute("value") || p.getAttribute("default");
+                if (id && defVal && !paramMap[id]) {
+                  paramMap[id] = defVal.trim();
+                }
+              }
+            } catch (eDef) {}
           }
 
           // 2. Find BPMN scenario flow XML
           const iflw = Object.keys(zip.files).find((fn) => fn.endsWith(".iflw") || fn.endsWith(".bpmn") || fn.includes("scenarioflows"));
           if (iflw) {
+            console.log(`[ZIP Download] Found BPMN scenario XML file: "${iflw}"`);
             return await zip.files[iflw].async("string");
           }
         }
-      } catch (e) {}
+      } catch (e) {
+        console.warn(`[ZIP Download] Failed for ${url}:`, e);
+      }
       return null;
     }
 
-    const isNeoTenant = apiHelper.isNeo ? apiHelper.isNeo() : false;
-    const wsGuid = (apiHelper.resolveWorkspaceGuid && pkgName) ? await apiHelper.resolveWorkspaceGuid(pkgName) : pkgName;
-    const artGuid = (apiHelper.resolveArtifactGuid && pkgName) ? await apiHelper.resolveArtifactGuid(pkgName, iflowId) : iflowId;
+    // Auto-resolve package and artifact GUID across the tenant
+    try {
+      if (pkgName && apiHelper.fetchPackageArtifacts) {
+        const arts = await apiHelper.fetchPackageArtifacts(pkgName);
+        const match = arts.find((a) => a.id === iflowId || a.name === iflowId || a.tooltip === iflowId || a.entityId === iflowId);
+        if (match) {
+          artGuid = match.entityId || match.rawId || iflowId;
+        } else if (apiHelper.resolveCurrentPackageId) {
+          const realPkg = await apiHelper.resolveCurrentPackageId(iflowId);
+          if (realPkg && realPkg !== pkgName) {
+            pkgName = realPkg;
+            const realArts = await apiHelper.fetchPackageArtifacts(pkgName);
+            const realMatch = realArts.find((a) => a.id === iflowId || a.name === iflowId || a.tooltip === iflowId || a.entityId === iflowId);
+            if (realMatch) artGuid = realMatch.entityId || realMatch.rawId || iflowId;
+          }
+        }
+      } else if (!pkgName && apiHelper.resolveCurrentPackageId) {
+        pkgName = await apiHelper.resolveCurrentPackageId(iflowId);
+        if (pkgName && apiHelper.fetchPackageArtifacts) {
+          const arts = await apiHelper.fetchPackageArtifacts(pkgName);
+          const match = arts.find((a) => a.id === iflowId || a.name === iflowId || a.tooltip === iflowId || a.entityId === iflowId);
+          if (match) artGuid = match.entityId || match.rawId || iflowId;
+        }
+      }
+
+      if (pkgName && apiHelper.resolveWorkspaceGuid) {
+        wsGuid = await apiHelper.resolveWorkspaceGuid(pkgName);
+      }
+    } catch (eRes) {}
+
     const tenant = (typeof cpiData !== "undefined" && cpiData.tenant) ? cpiData.tenant : window.location.host;
+    console.log(`[BPMN Model Helper] Resolving model for "${iflowId}" in package "${pkgName}" (wsGuid: ${wsGuid}, artGuid: ${artGuid})`);
 
     // 1. PRIMARY METHOD FOR CLOUD FOUNDRY: Pure JSON Web Modeler Diagram (Zero-unzip, direct JSON, works in browser session)
     if (!isNeoTenant && pkgName && wsGuid && artGuid) {
       try {
         const modelUrls = [
           `https://${tenant}/api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/entities/${encodeURIComponent(artGuid)}/iflows/${encodeURIComponent(iflowId)}?$format=json`,
-          `/api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/entities/${encodeURIComponent(artGuid)}/iflows/${encodeURIComponent(iflowId)}?$format=json`,
+          `https://${tenant}/api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/entities/${encodeURIComponent(artGuid)}/iflows/${encodeURIComponent(artGuid)}?$format=json`,
         ];
 
         let modelJson = null;
         for (const mu of modelUrls) {
           try {
-            if (mu.startsWith("http")) {
-              const resp = await fetch(mu, { method: "GET", headers: { Accept: "application/json" }, credentials: "include" });
-              if (resp.ok) {
-                modelJson = await resp.json();
-                if (modelJson) break;
-              }
-            } else {
-              const raw = await makeCallPromise("GET", mu, false, null, null, true, "application/json", true);
-              modelJson = typeof raw === "string" ? JSON.parse(raw) : raw;
+            console.log(`%c[API CALL] GET Modeler JSON: ${mu}`, "color: #0284c7;");
+            const resp = await fetch(mu, { method: "GET", headers: { Accept: "application/json" }, credentials: "include" });
+            console.log(`[API RESP] HTTP ${resp.status} for ${mu}`);
+            if (resp.ok) {
+              modelJson = await resp.json();
               if (modelJson) break;
             }
-          } catch (eMu) {}
+          } catch (eMu) {
+            console.warn(`[Modeler JSON] Failed querying ${mu}:`, eMu);
+          }
         }
 
         if (modelJson) {
@@ -191,7 +261,7 @@ const CmdBpmnModelHelper = {
           console.log(`[BPMN Model Helper] ${iflowId} model parsed -> Inbound: ${inbound.length}, Outbound: ${outbound.length}, Steps: ${Object.keys(steps).length}`, { inbound, outbound, steps });
 
           if (outbound.length > 0 || inbound.length > 0 || Object.keys(steps).length > 0) {
-            const result = { iflowId, outbound, inbound, steps };
+            const result = { iflowId, outbound, inbound, steps, paramMap };
             iflowBpmnModelCache.set(iflowId, result);
             return result;
           }
@@ -201,56 +271,54 @@ const CmdBpmnModelHelper = {
       }
     }
 
-    // 2. PRIMARY METHOD FOR NEO & ZIP FALLBACK: Candidate URLs for ZIP Archive
-    const candidateUrls = isNeoTenant ? [
-      `/${urlExt}odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`,
-      `/itspaces/odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`,
-      `/${urlExt}odata/1.0/workspace.svc/ContentEntities.Artifacts(Name='${encodeURIComponent(iflowId)}',Type='IFlow')/$value`,
-      pkgName ? `/${urlExt}odata/1.0/workspace.svc/ContentPackages('${encodeURIComponent(pkgName)}')/Artifacts('${encodeURIComponent(iflowId)}')/$value` : null,
-    ].filter(Boolean) : [
-      (wsGuid && artGuid) ? `https://${tenant}/api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/archive` : null,
-      (wsGuid && artGuid) ? `/api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/archive` : null,
-      `/${urlExt}api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`,
-      `/itspaces/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`,
-    ].filter(Boolean);
+    // Helper to generate a guaranteed absolute HTTPS URL
+    function toAbsoluteUrl(p) {
+      if (!p) return "";
+      if (p.startsWith("http://") || p.startsWith("https://")) return p;
+      const clean = p.replace(/^\/+/, "");
+      return `https://${tenant}/${clean}`;
+    }
+
+    // 2. Candidate URLs for ZIP Archive (Standard OData Artifact Download)
+    const candidateUrls = [
+      toAbsoluteUrl(`api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`),
+      toAbsoluteUrl(`odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`),
+    ];
 
     for (const u of candidateUrls) {
       bpmnXml = await tryDownloadZip(u);
       if (bpmnXml) break;
     }
 
-    // 2. If Version='active' returns 404 (Cloud Foundry numeric version requirement), query real version
+    // 3. If needed, query real version via OData and download exact version value
     if (!bpmnXml) {
       try {
-        const getApi = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getApiUrl) ? CmdCpiApiHelper.getApiUrl : window.getApiUrl;
         const metaUrls = [
-          getApi ? getApi(`IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'&$select=Id,Version`) : null,
-          `/${urlExt}api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'`,
-          `/${urlExt}odata/api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'`,
-          `/itspaces/api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'`,
-          `/itspaces/odata/api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'`,
-        ].filter(Boolean);
+          toAbsoluteUrl(`api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'&$select=Id,Version`),
+          toAbsoluteUrl(`odata/api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'&$select=Id,Version`),
+        ];
 
         let realVersion = "";
         for (const mu of metaUrls) {
           try {
-            const rawM = await makeCallPromise("GET", mu, false, null, null, false, null, true);
-            const resM = typeof rawM === "string" ? JSON.parse(rawM) : rawM;
-            const items = resM?.d?.results || resM?.value || (Array.isArray(resM) ? resM : []);
-            if (items.length > 0 && items[0].Version) {
-              realVersion = items[0].Version;
-              break;
+            const resp = await fetch(mu, { headers: { Accept: "application/json" }, credentials: "include" });
+            if (resp.ok) {
+              const resM = await resp.json();
+              const items = resM?.d?.results || resM?.value || (Array.isArray(resM) ? resM : []);
+              if (items.length > 0 && items[0].Version) {
+                realVersion = items[0].Version;
+                break;
+              }
             }
           } catch (eM) {}
         }
 
         if (realVersion) {
           const versionUrls = [
-            `/${urlExt}api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`,
-            `/${urlExt}odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`,
-            `/itspaces/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`,
-            `/itspaces/odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`,
+            toAbsoluteUrl(`api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`),
+            toAbsoluteUrl(`odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='${realVersion}')/$value`),
           ];
+
           for (const vu of versionUrls) {
             bpmnXml = await tryDownloadZip(vu);
             if (bpmnXml) break;
@@ -339,7 +407,7 @@ const CmdBpmnModelHelper = {
       }
     }
 
-    const result = { iflowId, outbound, inbound, steps };
+    const result = { iflowId, outbound, inbound, steps, paramMap };
     iflowBpmnModelCache.set(iflowId, result);
     return result;
   },

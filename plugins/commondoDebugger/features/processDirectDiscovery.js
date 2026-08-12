@@ -8,17 +8,13 @@
 const CmdProcessDirectDiscovery = {
   /**
    * Constructs the runtime ProcessDirect execution topology for a specific Correlation ID.
-   * Resolves dynamic outbound expressions using actual executed logs and time intervals.
+   * Resolves dynamic outbound expressions using BPMN static analysis, externalized
+   * parameters, trace payload inspection, and correlation-based structural inference.
+   * Zero timestamp/timing heuristics. Fast and strictly cached.
    */
   async buildCorrelationTopology(rootFlowId, correlationLogs = [], packageId = null) {
     const apiHelper = typeof CmdCpiApiHelper !== "undefined" ? CmdCpiApiHelper : {};
     const bpmnHelper = typeof CmdBpmnModelHelper !== "undefined" ? CmdBpmnModelHelper : {};
-    const parseMs = apiHelper.parseMs || ((ts) => {
-      if (!ts) return 0;
-      if (typeof ts === "number") return ts;
-      const m = String(ts).match(/\d+/);
-      return m ? parseInt(m[0], 10) : new Date(ts).getTime() || 0;
-    });
 
     if (!correlationLogs || correlationLogs.length === 0) {
       return {
@@ -28,155 +24,368 @@ const CmdProcessDirectDiscovery = {
       };
     }
 
-    // 1. Group correlation logs by flow ID and calculate overall execution time windows
+    // 1. Group correlation logs by flow ID
     const logsByFlowId = {};
-    const flowIntervals = {};
-
     correlationLogs.forEach((log) => {
       const flowId = log.IntegrationFlowName || log.IntegrationArtifact?.Id || "iFlow";
       if (!logsByFlowId[flowId]) logsByFlowId[flowId] = [];
       logsByFlowId[flowId].push(log);
-
-      const start = parseMs(log.LogStart);
-      const end = parseMs(log.LogEnd) || start;
-
-      if (!flowIntervals[flowId]) {
-        flowIntervals[flowId] = { start, end };
-      } else {
-        flowIntervals[flowId].start = Math.min(flowIntervals[flowId].start, start);
-        flowIntervals[flowId].end = Math.max(flowIntervals[flowId].end, end);
-      }
     });
 
-    const distinctFlowIds = Object.keys(logsByFlowId);
-
-    // Identify real root flow: the flow that initiated this correlation chain (earliest LogStart)
-    let effectiveRoot = distinctFlowIds.reduce((earliest, flowId) => {
-      if (!earliest) return flowId;
-      return (flowIntervals[flowId].start < flowIntervals[earliest].start) ? flowId : earliest;
-    }, null) || rootFlowId;
-
-    // 2. Fetch BPMN models for all executed flows (inbound & outbound)
-    const pkgId = packageId || (await apiHelper.resolveCurrentPackageId(effectiveRoot));
+    const executedFlowIds = Object.keys(logsByFlowId);
+    const pkgId = packageId || (await apiHelper.resolveCurrentPackageId(rootFlowId));
     const flowModels = {};
     const inboundRegistry = []; // { flowId, address, normalized }
+    const combinedParamMap = {}; // Shared across all flows in the package
 
+    // Address matching helper (strips leading/trailing slashes, case-insensitive)
+    function matchAddress(a1, a2) {
+      if (!a1 || !a2) return false;
+      const s1 = String(a1).trim().toLowerCase().replace(/^\/+|\/+$/g, "");
+      const s2 = String(a2).trim().toLowerCase().replace(/^\/+|\/+$/g, "");
+      return Boolean(s1 && s2 && s1 === s2);
+    }
+
+    // Helper: register an address in the inbound registry (deduplicates)
+    function registerInbound(flowId, address) {
+      if (!address) return;
+      const clean = String(address).trim();
+      const norm = clean.toLowerCase().replace(/^\/+|\/+$/g, "");
+      if (!norm) return;
+      if (!inboundRegistry.some((r) => r.normalized === norm && r.flowId === flowId)) {
+        inboundRegistry.push({ flowId, address: clean, normalized: norm });
+      }
+    }
+
+    // Helper: register all inbound addresses for a flow model
+    function registerFlowInbounds(flowId, model) {
+      if (!model) return;
+      // Copy parameters to combined map
+      Object.assign(combinedParamMap, model.paramMap || {});
+
+      (model.inbound || []).forEach((inChan) => {
+        if (!inChan.address) return;
+        const raw = inChan.address.trim();
+
+        // Check if raw is a {{param}}
+        const pm = raw.match(/^\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}$/);
+        if (pm && pm[1]) {
+          const resolved = model.paramMap?.[pm[1]] || model.paramMap?.[pm[1].toLowerCase()] || combinedParamMap[pm[1]];
+          if (resolved) {
+            registerInbound(flowId, resolved);
+          }
+          // Also register param name and raw template as fallback match targets
+          registerInbound(flowId, pm[1]);
+          registerInbound(flowId, raw);
+        } else {
+          registerInbound(flowId, raw);
+        }
+      });
+
+      // Always register flowId itself as an inbound target
+      registerInbound(flowId, flowId);
+    }
+
+    // 2. High-Performance BPMN Loading:
+    // Load ONLY the executed flows and active flow initially (prevents downloading 50 unneeded ZIPs)
+    const initialFlows = Array.from(new Set([...executedFlowIds, rootFlowId])).filter(Boolean);
     await Promise.all(
-      distinctFlowIds.map(async (flowId) => {
+      initialFlows.map(async (flowId) => {
         try {
           const model = await bpmnHelper.fetchIFlowBpmnModel(flowId, pkgId);
           flowModels[flowId] = model;
-
-          model.inbound.forEach((inChan) => {
-            if (inChan.address) {
-              const norm = inChan.address.trim().toLowerCase();
-              inboundRegistry.push({ flowId, address: inChan.address.trim(), normalized: norm });
-            }
-          });
+          registerFlowInbounds(flowId, model);
         } catch (e) {
-          flowModels[flowId] = { inbound: [], outbound: [], steps: {} };
+          flowModels[flowId] = { inbound: [], outbound: [], steps: {}, paramMap: {} };
         }
       })
     );
 
-    // 3. Resolve directed edges from Caller -> Callee
+    // 3. Structural Root Detection (Zero timing heuristics):
+    // The entry point flow is the executed flow that has NO inbound ProcessDirect channel
+    // (e.g. triggered via HTTPS / Timer / SFTP / Mail).
+    let effectiveRoot = rootFlowId;
+    const executedEntryFlows = executedFlowIds.filter((flowId) => {
+      const model = flowModels[flowId];
+      return !model || !model.inbound || model.inbound.length === 0;
+    });
+
+    if (executedEntryFlows.length === 1) {
+      effectiveRoot = executedEntryFlows[0];
+    } else if (executedEntryFlows.length > 1) {
+      const withOutbounds = executedEntryFlows.find((fId) => (flowModels[fId]?.outbound || []).length > 0);
+      effectiveRoot = withOutbounds || executedEntryFlows[0];
+    } else if (executedFlowIds.length > 0) {
+      effectiveRoot = executedFlowIds[0];
+    }
+
+    // 4. Unified Recursive Graph Worklist (Static -> Parameters.prop -> Trace Payload)
     const directedEdges = [];
     const matchedChildren = new Set();
+    const resolutionLogs = [];
+    const hangingByCaller = {};
+    const allDiscoveredFlows = new Set(executedFlowIds.length > 0 ? executedFlowIds : [effectiveRoot]);
+    const workQueue = Array.from(new Set([effectiveRoot, ...executedFlowIds]));
+    const visitedInWorkQueue = new Set();
 
-    for (const callerId of distinctFlowIds) {
-      const model = flowModels[callerId] || { outbound: [] };
-      const callerInterval = flowIntervals[callerId] || { start: 0, end: Infinity };
+    while (workQueue.length > 0) {
+      const callerId = workQueue.shift();
+      if (visitedInWorkQueue.has(callerId)) continue;
+      visitedInWorkQueue.add(callerId);
+      allDiscoveredFlows.add(callerId);
+
+      // Lazy load BPMN model if not already cached
+      if (!flowModels[callerId]) {
+        try {
+          const model = await bpmnHelper.fetchIFlowBpmnModel(callerId, pkgId);
+          flowModels[callerId] = model;
+          registerFlowInbounds(callerId, model);
+        } catch (e) {
+          flowModels[callerId] = { inbound: [], outbound: [], steps: {}, paramMap: {} };
+        }
+      }
+
+      const model = flowModels[callerId] || { outbound: [], paramMap: {} };
+      const callerLogs = logsByFlowId[callerId] || [];
+
+      // Lazy load trace data if caller has dynamic outbounds and trace is available
+      let traceData = null;
+      const hasDynamicOutbounds = model.outbound.some((o) => {
+        const n = (o.address || "").trim().toLowerCase();
+        return n.includes("${") || n.includes("{{") || !n.startsWith("/");
+      });
+
+      if (hasDynamicOutbounds && callerLogs.length > 0 && typeof CmdTracePayloadHelper !== "undefined") {
+        for (const log of callerLogs) {
+          if (log.MessageGuid && (log.LogLevel === "TRACE" || !traceData)) {
+            try {
+              traceData = await CmdTracePayloadHelper.fetchRunTraceHeadersAndProperties(log.MessageGuid);
+              if (traceData && (Object.keys(traceData.properties || {}).length > 0 || Object.keys(traceData.headers || {}).length > 0)) {
+                break;
+              }
+            } catch (eTrace) {}
+          }
+        }
+      }
 
       for (const outChan of model.outbound) {
         const rawAddress = (outChan.address || "").trim();
         const normOut = rawAddress.toLowerCase();
-        let targetFlow = null;
-        let resolvedAddress = rawAddress;
 
-        // Case A: Static exact match in inbound registry
-        const directMatch = inboundRegistry.find((r) => r.normalized === normOut && r.flowId !== callerId);
-        if (directMatch && distinctFlowIds.includes(directMatch.flowId)) {
-          targetFlow = directMatch.flowId;
-          resolvedAddress = directMatch.address;
+        let resolvedTargetFlow = null;
+        let resolvedEndpointAddress = null;
+        let isDynamic = false;
+        let matchDescription = "";
+
+        // Pass 1: Static Match (address-to-address, address-to-flowId)
+        const directMatch = inboundRegistry.find((r) => matchAddress(r.address, rawAddress) && r.flowId !== callerId);
+        if (directMatch) {
+          resolvedTargetFlow = directMatch.flowId;
+          resolvedEndpointAddress = directMatch.address;
+          isDynamic = false;
+          matchDescription = "Static Match";
         }
 
-        // Case B: Dynamic address expression (${property.xyz}, ${header.abc}, {{param}})
-        if (!targetFlow && (normOut.includes("${") || normOut.includes("{{"))) {
-          // Find which child flows executed inside the caller's execution window
-          const candidateChildren = distinctFlowIds.filter((cid) => {
-            if (cid === callerId) return false;
-            const cIv = flowIntervals[cid];
-            return cIv && cIv.start >= callerInterval.start && cIv.start <= callerInterval.end;
-          });
-
-          // Check if candidate child's inbound endpoint is in the registry
-          for (const candId of candidateChildren) {
-            const candInbounds = inboundRegistry.filter((r) => r.flowId === candId);
-            if (candInbounds.length > 0) {
-              targetFlow = candId;
-              resolvedAddress = candInbounds[0].address; // The actual runtime endpoint of the called flow!
-              break;
+        // Pass 2: Externalized Parameters (parameters.prop from caller or shared map)
+        if (!resolvedTargetFlow && rawAddress.includes("{{") && rawAddress.includes("}}")) {
+          const pName = rawAddress.replace(/.*\{\{|\}\}.*/g, "").trim();
+          let pVal = model.paramMap?.[pName] || model.paramMap?.[pName.toLowerCase()] || combinedParamMap[pName] || combinedParamMap[pName.toLowerCase()];
+          // Recursive resolution if pVal is itself a {{param}}
+          if (pVal && typeof pVal === "string" && pVal.includes("{{")) {
+            const innerName = pVal.replace(/.*\{\{|\}\}.*/g, "").trim();
+            pVal = model.paramMap?.[innerName] || combinedParamMap[innerName] || combinedParamMap[innerName.toLowerCase()] || pVal;
+          }
+          if (pVal) {
+            const pMatch = inboundRegistry.find((r) => matchAddress(r.address, pVal) && r.flowId !== callerId)
+                        || inboundRegistry.find((r) => matchAddress(r.flowId, pVal) && r.flowId !== callerId);
+            if (pMatch) {
+              resolvedTargetFlow = pMatch.flowId;
+              resolvedEndpointAddress = pMatch.address;
+              isDynamic = false;
+              matchDescription = `Externalized Parameter (${pName} = ${pVal})`;
             }
           }
         }
 
-        if (targetFlow) {
-          if (!directedEdges.some((e) => e.from === callerId && e.to === targetFlow && e.address === resolvedAddress)) {
+        // Pass 3: Trace Payload & Header/Property Inspection
+        const isDynamicExpr = normOut.includes("${") || normOut.includes("{{") || !normOut.startsWith("/");
+        if (!resolvedTargetFlow && isDynamicExpr && traceData) {
+          let traceVal = null;
+          let extractedKey = "";
+
+          // 3a. Try explicit ${property.xxx} or ${header.xxx} extraction
+          const propMatch = rawAddress.match(/\$\{(?:property\.)?([^\}]+)\}/i);
+          const headerMatch = rawAddress.match(/\$\{(?:header\.)?([^\}]+)\}/i);
+
+          if (propMatch && propMatch[1]) {
+            extractedKey = propMatch[1].trim();
+            traceVal = traceData.properties?.[extractedKey] || traceData.properties?.[extractedKey.toLowerCase()];
+          } else if (headerMatch && headerMatch[1]) {
+            extractedKey = headerMatch[1].trim();
+            traceVal = traceData.headers?.[extractedKey] || traceData.headers?.[extractedKey.toLowerCase()];
+          }
+
+          // 3b. Fallback: scan all property/header keys for substring match
+          if (!traceVal) {
+            for (const k of Object.keys(traceData.properties || {})) {
+              if (rawAddress.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawAddress.toLowerCase())) {
+                traceVal = traceData.properties[k];
+                extractedKey = k;
+                break;
+              }
+            }
+            if (!traceVal) {
+              for (const k of Object.keys(traceData.headers || {})) {
+                if (rawAddress.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawAddress.toLowerCase())) {
+                  traceVal = traceData.headers[k];
+                  extractedKey = k;
+                  break;
+                }
+              }
+            }
+          }
+
+          // 3c. Deep scan: check if ANY property or header value matches a known flow or endpoint
+          if (!traceVal) {
+            const allTraceValues = [
+              ...Object.values(traceData.properties || {}),
+              ...Object.values(traceData.headers || {}),
+            ].filter((v) => typeof v === "string" && v.length > 2 && (v.startsWith("/") || executedFlowIds.some((f) => matchAddress(f, v))));
+
+            for (const tv of allTraceValues) {
+              const deepMatch = inboundRegistry.find((r) => matchAddress(r.address, tv) && r.flowId !== callerId)
+                             || inboundRegistry.find((r) => matchAddress(r.flowId, tv) && r.flowId !== callerId);
+              if (deepMatch) {
+                traceVal = tv;
+                extractedKey = "Deep Trace Match";
+                resolvedTargetFlow = deepMatch.flowId;
+                resolvedEndpointAddress = deepMatch.address;
+                isDynamic = true;
+                matchDescription = `Trace Payload Deep Match (${tv} -> ${deepMatch.flowId})`;
+                break;
+              }
+            }
+          }
+
+          if (traceVal && !resolvedTargetFlow) {
+            const traceMatch = inboundRegistry.find((r) => matchAddress(r.address, traceVal) && r.flowId !== callerId)
+                            || inboundRegistry.find((r) => matchAddress(r.flowId, traceVal) && r.flowId !== callerId);
+            if (traceMatch) {
+              resolvedTargetFlow = traceMatch.flowId;
+              resolvedEndpointAddress = traceMatch.address;
+              isDynamic = true;
+              matchDescription = `Trace Payload Inspection (${extractedKey || rawAddress} = ${traceVal})`;
+            }
+          }
+        }
+
+        // Pass 4: Link Edge or Fallback to Hanging Dynamic Pill
+        if (resolvedTargetFlow) {
+          allDiscoveredFlows.add(resolvedTargetFlow);
+          if (!directedEdges.some((e) => e.from === callerId && e.to === resolvedTargetFlow && e.address === resolvedEndpointAddress)) {
             directedEdges.push({
               from: callerId,
-              to: targetFlow,
-              address: resolvedAddress,
+              to: resolvedTargetFlow,
+              address: resolvedEndpointAddress,
               rawAddress: rawAddress,
-              isDynamic: rawAddress !== resolvedAddress,
+              isDynamic: isDynamic,
+              matchType: matchDescription,
             });
-            matchedChildren.add(targetFlow);
+            matchedChildren.add(resolvedTargetFlow);
+            resolutionLogs.push({
+              Caller: callerId,
+              "Raw Outbound": rawAddress,
+              "Matched Callee": resolvedTargetFlow,
+              "Resolved Address": resolvedEndpointAddress,
+              "Match Type": matchDescription,
+            });
+          }
+
+          // Enqueue newly discovered flow to resolve its children as well
+          if (!visitedInWorkQueue.has(resolvedTargetFlow)) {
+            workQueue.push(resolvedTargetFlow);
+          }
+        } else if (isDynamicExpr) {
+          if (!hangingByCaller[callerId]) hangingByCaller[callerId] = [];
+          if (!hangingByCaller[callerId].some((h) => h.rawAddress === rawAddress)) {
+            hangingByCaller[callerId].push({
+              address: rawAddress,
+              rawAddress: rawAddress,
+              isDynamic: true,
+            });
+            resolutionLogs.push({
+              Caller: callerId,
+              "Raw Outbound": rawAddress,
+              "Matched Callee": "(None - Trace Missing / Hanging Call)",
+              "Resolved Address": rawAddress,
+              "Match Type": "Hanging Dynamic Endpoint",
+            });
           }
         }
       }
     }
 
-    // 4. Interval Containment Fallback: Connect any unlinked child flows that executed inside a parent
-    distinctFlowIds.forEach((flowId) => {
-      if (flowId === effectiveRoot || matchedChildren.has(flowId)) return;
+    // Pass 5: Correlation-Based Structural Inference (Zero timing)
+    // For any executed flow in this correlation that has NO incoming edge,
+    // link it from the caller that has unresolved hanging outbounds or dynamic outbounds.
+    const flowsWithIncomingEdge = new Set(directedEdges.map((e) => e.to));
+    const executedButUnlinked = executedFlowIds.filter((fId) => fId !== effectiveRoot && !flowsWithIncomingEdge.has(fId));
 
-      const flowIv = flowIntervals[flowId];
-      if (!flowIv) return;
+    for (const unlinkedFlow of executedButUnlinked) {
+      const unlinkedModel = flowModels[unlinkedFlow] || {};
+      const unlinkedInbounds = (unlinkedModel.inbound || []).map((i) => (i.address || "").trim()).filter(Boolean);
+      const bestInbound = unlinkedInbounds[0] || `/${unlinkedFlow}`;
 
-      // Find candidate parents whose execution interval strictly contains this child flow
-      let bestParent = null;
-      let minParentDuration = Infinity;
+      // Structural parent selection: find the caller with the most hanging/dynamic outbounds
+      let bestCaller = null;
+      let bestHangingCount = -1;
 
-      distinctFlowIds.forEach((candId) => {
-        if (candId === flowId) return;
-        const candIv = flowIntervals[candId];
-        const isCallerOfCand = directedEdges.some((e) => e.from === flowId && e.to === candId);
-        if (!isCallerOfCand && candIv && candIv.start <= flowIv.start && candIv.end >= flowIv.end) {
-          const duration = candIv.end - candIv.start;
-          if (duration < minParentDuration) {
-            minParentDuration = duration;
-            bestParent = candId;
-          }
-        }
-      });
-
-      if (!bestParent && flowId !== effectiveRoot) {
-        bestParent = effectiveRoot;
-      }
-
-      if (bestParent && bestParent !== flowId && !directedEdges.some((e) => e.from === flowId && e.to === bestParent)) {
-        const calleeInbound = inboundRegistry.find((r) => r.flowId === flowId)?.address || "/processdirect";
-        directedEdges.push({
-          from: bestParent,
-          to: flowId,
-          address: calleeInbound,
-          rawAddress: calleeInbound,
-          isDynamic: false,
+      for (const candidateCaller of executedFlowIds) {
+        if (candidateCaller === unlinkedFlow) continue;
+        const hanging = hangingByCaller[candidateCaller] || [];
+        const hasDynamic = (flowModels[candidateCaller]?.outbound || []).some((o) => {
+          const n = (o.address || "").trim().toLowerCase();
+          return n.includes("${") || n.includes("{{") || !n.startsWith("/");
         });
-        matchedChildren.add(flowId);
-      }
-    });
+        if (hanging.length === 0 && !hasDynamic) continue;
 
-    // 5. Compute Hierarchical Levels (Root = Level 0, direct children = Level 1, grandchildren = Level 2...)
+        const hangingCount = hanging.length + (hasDynamic ? 1 : 0);
+        if (hangingCount > bestHangingCount) {
+          bestHangingCount = hangingCount;
+          bestCaller = candidateCaller;
+        }
+      }
+
+      // If no hanging caller found, link from effectiveRoot
+      if (!bestCaller && effectiveRoot !== unlinkedFlow) {
+        bestCaller = effectiveRoot;
+      }
+
+      if (bestCaller) {
+        if (!directedEdges.some((e) => e.from === bestCaller && e.to === unlinkedFlow)) {
+          directedEdges.push({
+            from: bestCaller,
+            to: unlinkedFlow,
+            address: bestInbound,
+            rawAddress: bestInbound,
+            isDynamic: true,
+            matchType: "Correlation Inference",
+          });
+          matchedChildren.add(unlinkedFlow);
+          resolutionLogs.push({
+            Caller: bestCaller,
+            "Raw Outbound": "(Correlation Inference)",
+            "Matched Callee": unlinkedFlow,
+            "Resolved Address": bestInbound,
+            "Match Type": "Correlation Inference",
+          });
+        }
+      }
+    }
+
+    const distinctFlowIds = Array.from(allDiscoveredFlows);
+
+    // 4. Compute Hierarchical Levels (DAG topological BFS from Root)
     const nodeLevels = { [effectiveRoot]: 0 };
     const queue = [effectiveRoot];
     const visited = new Set([effectiveRoot]);
@@ -187,9 +396,13 @@ const CmdProcessDirectDiscovery = {
 
       const outEdges = directedEdges.filter((e) => e.from === curr);
       outEdges.forEach((e) => {
+        const nextLevel = currLevel + 1;
+        // In a DAG, node level should be at least (parentLevel + 1)
+        if (nodeLevels[e.to] === undefined || nextLevel > nodeLevels[e.to]) {
+          nodeLevels[e.to] = nextLevel;
+        }
         if (!visited.has(e.to)) {
           visited.add(e.to);
-          nodeLevels[e.to] = currLevel + 1;
           queue.push(e.to);
         }
       });
@@ -199,13 +412,14 @@ const CmdProcessDirectDiscovery = {
       if (nodeLevels[id] === undefined) nodeLevels[id] = 1;
     });
 
-    // 6. Construct Final Nodes
+    // 5. Construct Final Nodes
     const topologyNodes = distinctFlowIds.map((id) => ({
       id: id,
       level: nodeLevels[id] || 0,
       runCount: (logsByFlowId[id] || []).length,
       outboundCalls: (flowModels[id]?.outbound || []).length,
       inboundEndpoints: (flowModels[id]?.inbound || []).map((i) => i.address).join(", "),
+      hangingOutbounds: hangingByCaller[id] || [],
     }));
 
     return {
@@ -213,6 +427,12 @@ const CmdProcessDirectDiscovery = {
       edges: directedEdges,
       levels: nodeLevels,
       rootFlowId: effectiveRoot,
+      _diagnostics: {
+
+        flowModels,
+        inboundRegistry,
+        resolutionLogs,
+      },
     };
   },
 
@@ -254,6 +474,39 @@ const CmdProcessDirectDiscovery = {
       nodeLevels[currFlow] = currLevel;
 
       const model = await bpmnHelper.fetchIFlowBpmnModel(currFlow, pkgId);
+      const hangingOutbounds = [];
+
+      for (const outChan of model.outbound) {
+        const rawAddress = (outChan.address || "").trim();
+        const normTarget = rawAddress.toLowerCase();
+        let targetFlow = endpointToIFlowMap.get(normTarget);
+
+        if (targetFlow) {
+          if (!directedEdges.some((e) => e.from === currFlow && e.to === targetFlow && e.address === rawAddress)) {
+            directedEdges.push({
+              from: currFlow,
+              to: targetFlow,
+              address: rawAddress,
+              channel: "ProcessDirect",
+              sourceLevel: currLevel,
+              targetLevel: currLevel + 1,
+              isDynamic: false,
+              matchType: "Static Match",
+            });
+
+            if (!visitedNodes.has(targetFlow)) {
+              visitedNodes.add(targetFlow);
+              queue.push({ flowId: targetFlow, level: currLevel + 1 });
+            }
+          }
+        } else if (normTarget.includes("${") || normTarget.includes("{{") || !normTarget.startsWith("/")) {
+          hangingOutbounds.push({
+            address: rawAddress,
+            rawAddress: rawAddress,
+            isDynamic: true,
+          });
+        }
+      }
 
       topologyNodes.push({
         id: currFlow,
@@ -262,29 +515,8 @@ const CmdProcessDirectDiscovery = {
         outboundAddresses: model.outbound.map((o) => o.address).join(", "),
         inboundEndpoints: model.inbound.map((i) => i.address).join(", "),
         totalBpmnSteps: Object.keys(model.steps).length,
+        hangingOutbounds: hangingOutbounds,
       });
-
-      for (const outChan of model.outbound) {
-        const rawAddress = (outChan.address || "").trim();
-        const normTarget = rawAddress.toLowerCase();
-        let targetFlow = endpointToIFlowMap.get(normTarget);
-
-        if (targetFlow) {
-          directedEdges.push({
-            from: currFlow,
-            to: targetFlow,
-            address: rawAddress,
-            channel: "ProcessDirect",
-            sourceLevel: currLevel,
-            targetLevel: currLevel + 1,
-          });
-
-          if (!visitedNodes.has(targetFlow)) {
-            visitedNodes.add(targetFlow);
-            queue.push({ flowId: targetFlow, level: currLevel + 1 });
-          }
-        }
-      }
     }
 
     return { nodes: topologyNodes, edges: directedEdges, levels: nodeLevels };
@@ -335,6 +567,14 @@ const CmdProcessDirectDiscovery = {
     const pkgId = packageId || (await apiHelper.resolveCurrentPackageId(activeFlow));
     console.log(`Target Flow: ${activeFlow} | Package ID: ${pkgId || "Auto"}`);
 
+    // Clear caches for this test execution run so fresh trace data and graph are generated
+    if (typeof CmdTracePayloadHelper !== "undefined" && CmdTracePayloadHelper.clearCache) {
+      CmdTracePayloadHelper.clearCache();
+    }
+    if (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.clearCache) {
+      CmdBpmnModelHelper.clearCache();
+    }
+
     // 1. Identify Target Execution Run
     let targetRun = selectedRun;
     if (!targetRun) {
@@ -380,7 +620,7 @@ const CmdProcessDirectDiscovery = {
       }
     }
 
-    console.log(`\n[1/3] Found ${corrLogs.length} message logs in Correlation ID "${targetRun.CorrelationId}":`);
+    console.log(`\n[1/5] Executed iFlows in Correlation ID "${targetRun.CorrelationId}" (${corrLogs.length} total message logs):`);
     const logsSummary = {};
     corrLogs.forEach((l) => {
       const fName = l.IntegrationFlowName || l.IntegrationArtifact?.Id || "iFlow";
@@ -392,10 +632,29 @@ const CmdProcessDirectDiscovery = {
     console.table(Object.values(logsSummary));
 
     // 3. Run Correlation Topology Resolution
-    console.log("\n[2/3] Resolving Dynamic ProcessDirect Topology Graph...");
+    console.log("\n[2/5] Resolving ProcessDirect Topology Graph (Static-First -> Dynamic)...");
     const topoResult = await this.buildCorrelationTopology(activeFlow, corrLogs, pkgId);
+    const diag = topoResult._diagnostics || {};
 
-    console.log("\n[3/3] Diagnostic Topology Result:");
+    // 4. Detailed Diagnostic Breakdowns
+    console.groupCollapsed("[3/5] BPMN Models & Inbound/Outbound Channels per Executed Flow");
+    console.log("Inbound Endpoint Registry:");
+    console.table(diag.inboundRegistry || []);
+    Object.keys(diag.flowModels || {}).forEach((fId) => {
+      const m = diag.flowModels[fId];
+      console.log(`%cFlow: ${fId}`, "font-weight: bold; color: #0284c7;", {
+        inbound: m.inbound,
+        outbound: m.outbound,
+      });
+    });
+    console.groupEnd();
+
+    console.groupCollapsed("[4/5] Step-by-Step Channel Resolution Decision Trail");
+    console.log("Resolution Trail:");
+    console.table(diag.resolutionLogs || []);
+    console.groupEnd();
+
+    console.log("\n[5/5] Final Discovered Topology Graph:");
     console.log("ASCII Call Hierarchy:");
     this.printAsciiSubtree(topoResult.rootFlowId || activeFlow, topoResult.edges);
 
@@ -409,7 +668,7 @@ const CmdProcessDirectDiscovery = {
         To: e.to,
         "Resolved Address": e.address,
         "Raw Address (BPMN)": e.rawAddress,
-        "Dynamic?": e.isDynamic ? "YES (Resolved at Runtime)" : "Static Match",
+        "Match Type": e.matchType || (e.isDynamic ? "Dynamic" : "Static"),
       })));
     } else {
       console.log("No child edges detected in this call chain.");

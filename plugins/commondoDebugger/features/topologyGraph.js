@@ -300,12 +300,14 @@ const CmdTopologyGraph = {
       const isRoot = node.level === 0;
 
       // Status determination
-      let status = hasRuns ? latestLog.Status || "COMPLETED" : "NO RUNS";
-      let statusColor = "#94a3b8"; // Gray for no runs
-      if (status === "COMPLETED") statusColor = "#10b981";
-      else if (status === "FAILED") statusColor = "#ef4444";
-      else if (status === "PROCESSING") statusColor = "#3b82f6";
-      else if (status.match(/^(RETRY|ESCALATED|CANCELLED)$/)) statusColor = "#f59e0b";
+      let status = hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
+      let statusColor = "#94a3b8"; // Gray for no runs / unexecuted
+      if (hasRuns) {
+        if (status === "COMPLETED") statusColor = "#10b981";
+        else if (status === "FAILED") statusColor = "#ef4444";
+        else if (status === "PROCESSING") statusColor = "#3b82f6";
+        else if (status.match(/^(RETRY|ESCALATED|CANCELLED|DISCARDED)$/)) statusColor = "#f59e0b";
+      }
 
       let rawName = flowId;
       if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
@@ -315,32 +317,60 @@ const CmdTopologyGraph = {
       nodeG.setAttribute("class", "cmd-node-group");
       nodeG.style.cursor = "pointer";
 
-      // Multi-run badge pill if logs.length > 1 (e.g. Iterator/Splitter call)
-      const multiRunBadge =
-        logs.length > 1
-          ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
-           <text x="${pos.x + nodeWidth - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
-          : isRoot
-            ? `<rect x="${pos.x + nodeWidth - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
-               <text x="${pos.x + nodeWidth - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
-            : "";
+      // Badge pill in top-right: Multi-run, Unexecuted, or Root
+      const rightBadge =
+        !hasRuns
+          ? `<rect x="${pos.x + nodeWidth - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+             <text x="${pos.x + nodeWidth - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">0 runs</text>`
+          : logs.length > 1
+            ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+               <text x="${pos.x + nodeWidth - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
+            : isRoot
+              ? `<rect x="${pos.x + nodeWidth - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
+                 <text x="${pos.x + nodeWidth - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
+              : "";
 
       nodeG.innerHTML = `
-        <title>${escapeHtml(flowId)}</title>
+        <title>${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
         <rect x="${pos.x}" y="${pos.y}" width="${nodeWidth}" height="${nodeHeight}" rx="8"
-              fill="${isSelected ? "#f0fdf4" : "#ffffff"}"
-              stroke="${isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
+              fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
+              stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
               stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
-              filter="drop-shadow(0 2px 6px rgba(0,0,0,0.06))" />
+              stroke-dasharray="${!hasRuns ? "4,3" : "none"}"
+              filter="drop-shadow(0 2px 6px rgba(0,0,0,0.05))" />
         <rect x="${pos.x}" y="${pos.y}" width="6" height="${nodeHeight}" rx="3" fill="${statusColor}" />
-        <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="#1e293b">
+        <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="${!hasRuns ? "#64748b" : "#1e293b"}">
           ${displayName}
         </text>
-        <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="#64748b">
+        <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
           Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan> ${hasRuns ? `| Lvl: ${escapeHtml(latestLog.LogLevel || "INFO")}` : ""}
         </text>
-        ${multiRunBadge}
+        ${rightBadge}
       `;
+
+      // Hanging Dynamic Outbound Channels (e.g. /${property.reportId} with no executed child in correlation)
+      const hangingOutbounds = node.hangingOutbounds || [];
+      hangingOutbounds.forEach((h, hIdx) => {
+        let labelText = h.address || h.rawAddress || "Dynamic Call";
+        if (labelText.length > 26) labelText = labelText.substring(0, 24) + "..";
+        const pillWidth = Math.max(80, labelText.length * 6.8 + 24);
+        const pillHeight = 22;
+        const startX = pos.x + nodeWidth / 2;
+        const startY = pos.y + nodeHeight;
+        const endY = startY + 28 + (hIdx * 26);
+
+        const hangingG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        hangingG.innerHTML = `
+          <title>Dynamic Outbound Call: ${escapeHtml(h.rawAddress || h.address)} (Target was not executed or not deployed in this run)</title>
+          <line x1="${startX}" y1="${startY}" x2="${startX}" y2="${endY - pillHeight / 2}" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3"/>
+          <rect x="${startX - pillWidth / 2}" y="${endY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
+                fill="#fffbeb" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="3,2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.08))"/>
+          <text x="${startX}" y="${endY + 4}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">
+            ${escapeHtml(labelText)} ↗
+          </text>
+        `;
+        g.appendChild(hangingG);
+      });
 
       nodeG.onclick = (e) => {
         e.stopPropagation();
