@@ -74,6 +74,7 @@
         "/plugins/commondoDebugger/helpers/tracePayloadHelper.js",
         "/plugins/commondoDebugger/helpers/zipExportHelper.js",
         "/plugins/commondoDebugger/features/processDirectDiscovery.js",
+        "/plugins/commondoDebugger/features/staticArchitectureDiscovery.js",
         "/plugins/commondoDebugger/features/traceManager.js",
         "/plugins/commondoDebugger/features/topologyGraph.js",
         "/plugins/commondoDebugger/features/stepInspector.js",

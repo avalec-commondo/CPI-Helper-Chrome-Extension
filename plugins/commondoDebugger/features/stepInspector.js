@@ -60,14 +60,15 @@ const CmdStepInspector = {
     const iFlowId = logEntry.IntegrationArtifact?.Id || logEntry.IntegrationFlowName || "iFlow";
 
     const wrapper = document.createElement("div");
+    wrapper.style.cssText = "height: 100%; display: flex; flex-direction: column; min-height: 0;";
     wrapper.innerHTML = `
-      <div style="margin-bottom: 12px; font-size: 0.85rem; color: #334155; background: #f1f5f9; padding: 10px 12px; border-radius: 6px; border-left: 4px solid #0070f3;">
-        <div style="font-weight: bold; font-size: 0.95rem; margin-bottom: 4px;">${escapeHtml(logEntry.IntegrationFlowName || iFlowId)}</div>
-        <div style="color: #64748b; font-size: 0.8rem;">
+      <div style="flex-shrink: 0; margin-bottom: 10px; font-size: 0.85rem; color: #334155; background: #f1f5f9; padding: 8px 12px; border-radius: 6px; border-left: 4px solid #0070f3;">
+        <div style="font-weight: bold; font-size: 0.92rem; margin-bottom: 3px;">${escapeHtml(logEntry.IntegrationFlowName || iFlowId)}</div>
+        <div style="color: #64748b; font-size: 0.78rem;">
           <b>Status:</b> ${escapeHtml(logEntry.Status)} | <b>LogLevel:</b> ${escapeHtml(logEntry.LogLevel || "INFO")} | <b>Steps:</b> ${steps.length}
         </div>
       </div>
-      <div id="cmd-steps-list-container" style="display: flex; flex-direction: column; gap: 8px; height: 70vh; overflow-y: auto;"></div>
+      <div id="cmd-steps-list-container" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;"></div>
     `;
 
     container.innerHTML = "";

@@ -11,7 +11,9 @@ const CmdDebuggerModal = {
   state: {
     rootFlowId: "",
     packageId: "",
+    viewMode: "runtime", // "runtime" | "static"
     topologyData: null,
+    staticTopologyData: null,
     rootExecutionRuns: [],
     selectedRootRun: null,
     logsByFlowId: {},
@@ -115,13 +117,23 @@ const CmdDebuggerModal = {
       modal = document.createElement("div");
       modal.id = "cmd-debugger-modal";
       modal.className = "ui modal";
-      modal.style.cssText = "width: 94vw !important; max-width: 1550px !important; border-radius: 8px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;";
+      modal.style.cssText = "width: 95vw !important; max-width: 1600px !important; height: 90vh !important; min-height: 650px !important; max-height: 950px !important; display: flex !important; flex-direction: column !important; border-radius: 8px; overflow: hidden; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;";
 
       modal.innerHTML = `
         <!-- Modal Header -->
-        <div class="header" style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; padding: 12px 20px; border-bottom: 1px solid #e2e8f0;">
-          <div style="display: flex; align-items: center; gap: 10px;">
+        <div class="header" style="flex-shrink: 0; display: flex; justify-content: space-between; align-items: center; background: #f8fafc; padding: 10px 20px; border-bottom: 1px solid #e2e8f0;">
+          <div style="display: flex; align-items: center; gap: 12px;">
             <span style="font-size: 1.15rem; font-weight: bold; color: #1e293b;">Commondo IS Trace Graph</span>
+            
+            <!-- View Mode Switcher (Runtime Path vs Static Architecture) -->
+            <div class="ui mini buttons" id="cmd-view-mode-buttons">
+              <button id="cmd-view-mode-runtime" class="ui positive mini button active" title="Show active executed call chain for selected run" style="padding: 5px 10px; font-size: 0.78rem; font-weight: 600;">
+                Runtime Path
+              </button>
+              <button id="cmd-view-mode-static" class="ui mini button" title="Show all static ProcessDirect connections across package iFlows" style="padding: 5px 10px; font-size: 0.78rem; font-weight: 600;">
+                Static Architecture
+              </button>
+            </div>
           </div>
           <div style="display: flex; align-items: center; gap: 10px;">
             <button id="cmd-modal-test-pd-btn" class="ui mini blue basic button" title="Run diagnostic ProcessDirect discovery test in Console" style="padding: 6px 10px; font-size: 0.8rem;">
@@ -134,13 +146,13 @@ const CmdDebuggerModal = {
           </div>
         </div>
 
-        <div class="content" style="padding: 14px 16px; background: #ffffff; max-height: 84vh; overflow: hidden; display: flex; flex-direction: column; gap: 12px;">
+        <div class="content" style="flex: 1 !important; min-height: 0 !important; height: 100% !important; padding: 12px 16px !important; background: #ffffff; overflow: hidden !important; display: flex !important; flex-direction: column !important; gap: 10px !important;">
           
           <!-- Top Control & Selection Bar -->
-          <div class="ui segment" style="margin: 0; padding: 10px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+          <div class="ui segment" style="flex-shrink: 0; margin: 0; padding: 8px 14px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             
             <!-- Left: Global Execution Run Selector -->
-            <div style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 320px;">
+            <div id="cmd-global-run-container" style="display: flex; align-items: center; gap: 10px; flex: 1; min-width: 320px; transition: opacity 0.2s ease;">
               <span style="font-weight: 600; color: #334155; font-size: 0.85rem; white-space: nowrap;">
                 Global Run Instance:
               </span>
@@ -157,25 +169,25 @@ const CmdDebuggerModal = {
           </div>
 
           <!-- Main Split Layout -->
-          <div class="ui grid" style="margin: 0; flex: 1; min-height: 0;">
+          <div class="ui grid" style="flex: 1 !important; min-height: 0 !important; height: 100% !important; margin: 0 !important; display: flex !important;">
             
             <!-- Left 9-wide column: Interactive Directional Graph (DAG) -->
-            <div class="nine wide column" style="padding-left: 0; padding-right: 8px;">
-              <div class="ui segment" style="height: 100%; padding: 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column;">
-                <div style="padding: 10px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-weight: 600; font-size: 0.9rem; color: #334155; display: flex; justify-content: space-between; align-items: center;">
-                  <span>Directional ProcessDirect Topology Map</span>
+            <div class="nine wide column" style="height: 100% !important; display: flex !important; flex-direction: column !important; min-height: 0 !important; padding-left: 0; padding-right: 6px;">
+              <div class="ui segment" style="flex: 1 !important; height: 100% !important; min-height: 0 !important; padding: 0; border: 1px solid #e2e8f0; border-radius: 6px; overflow: hidden; display: flex; flex-direction: column;">
+                <div style="flex-shrink: 0; padding: 8px 14px; background: #f8fafc; border-bottom: 1px solid #e2e8f0; font-weight: 600; font-size: 0.88rem; color: #334155; display: flex; justify-content: space-between; align-items: center;">
+                  <span id="cmd-topology-header-title">Directional ProcessDirect Topology Map</span>
                   <span style="font-size: 0.75rem; color: #64748b; font-weight: normal;">(Click node to select and inspect)</span>
                 </div>
-                <div id="cmd-topology-map-container" style="flex: 1; position: relative;"></div>
+                <div id="cmd-topology-map-container" style="flex: 1 !important; min-height: 0 !important; height: 100% !important; position: relative;"></div>
               </div>
             </div>
 
             <!-- Right 7-wide column: Node Details, Run Instance Dropdown & Step Inspector -->
-            <div class="seven wide column" style="padding-right: 0; padding-left: 8px;">
-              <div class="ui segment" style="height: 100%; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden;">
+            <div class="seven wide column" style="height: 100% !important; display: flex !important; flex-direction: column !important; min-height: 0 !important; padding-right: 0; padding-left: 6px;">
+              <div class="ui segment" style="flex: 1 !important; height: 100% !important; min-height: 0 !important; padding: 12px; border: 1px solid #e2e8f0; border-radius: 6px; display: flex; flex-direction: column; overflow: hidden;">
                 
                 <!-- Per-Node Header & Instance Selector -->
-                <div id="cmd-node-inspector-header" style="margin-bottom: 10px;">
+                <div id="cmd-node-inspector-header" style="flex-shrink: 0; margin-bottom: 8px;">
                   <div style="font-size: 0.95rem; font-weight: bold; color: #1e293b;" id="cmd-selected-node-title">No iFlow Selected</div>
                   <div id="cmd-node-instance-selector-container" style="margin-top: 6px; display: none;">
                     <label style="font-size: 0.8rem; font-weight: 600; color: #475569; margin-right: 6px;">Select Run Instance:</label>
@@ -185,7 +197,7 @@ const CmdDebuggerModal = {
                 </div>
 
                 <!-- Step Inspector Container -->
-                <div id="cmd-step-inspector-container" style="flex: 1; overflow-y: auto;">
+                <div id="cmd-step-inspector-container" style="flex: 1 !important; min-height: 0 !important; height: 100% !important; overflow-y: auto !important;">
                   <div style="padding: 50px 20px; text-align: center; color: #94a3b8;">
                     <div style="font-weight: 600; color: #64748b; font-size: 0.95rem;">Select an iFlow Node</div>
                     <div style="font-size: 0.8rem; margin-top: 4px;">Click on any node in the topology map on the left to inspect its execution steps and trace payloads.</div>
@@ -208,6 +220,32 @@ const CmdDebuggerModal = {
           CmdDebuggerModal.state.countdownInterval = null;
         }
         $(modal).modal("hide");
+      };
+
+      // View Mode Toggle (Runtime vs Static Architecture)
+      const runtimeBtn = modal.querySelector("#cmd-view-mode-runtime");
+      const staticBtn = modal.querySelector("#cmd-view-mode-static");
+      const runContainer = modal.querySelector("#cmd-global-run-container");
+      const headerTitle = modal.querySelector("#cmd-topology-header-title");
+
+      runtimeBtn.onclick = async () => {
+        if (CmdDebuggerModal.state.viewMode === "runtime") return;
+        CmdDebuggerModal.state.viewMode = "runtime";
+        runtimeBtn.classList.add("positive", "active");
+        staticBtn.classList.remove("positive", "active");
+        if (runContainer) runContainer.style.opacity = "1";
+        if (headerTitle) headerTitle.textContent = "Runtime Execution Topology Map";
+        await CmdDebuggerModal.renderActiveView();
+      };
+
+      staticBtn.onclick = async () => {
+        if (CmdDebuggerModal.state.viewMode === "static") return;
+        CmdDebuggerModal.state.viewMode = "static";
+        staticBtn.classList.add("positive", "active");
+        runtimeBtn.classList.remove("positive", "active");
+        if (runContainer) runContainer.style.opacity = "0.5";
+        if (headerTitle) headerTitle.textContent = "Static Package Architecture Map";
+        await CmdDebuggerModal.renderActiveView();
       };
 
       // Global run selector change
@@ -271,6 +309,7 @@ const CmdDebuggerModal = {
     if (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.clearCache) {
       CmdBpmnModelHelper.clearCache();
     }
+    this.state.staticTopologyData = null;
 
     mapContainer.innerHTML = `<div class="ui active centered inline loader" style="margin-top: 150px;"></div><div style="text-align: center; color: #666; margin-top: 10px;">Discovering ProcessDirect Topology...</div>`;
     globalRunSelect.innerHTML = `<option value="">Loading execution runs...</option>`;
@@ -384,22 +423,68 @@ const CmdDebuggerModal = {
       this.state.selectedNodeId = this.state.topologyData?.nodes?.[0]?.id || this.state.rootFlowId;
     }
 
-    // Render Directional Graph
-    if (typeof CmdTopologyGraph !== "undefined" && CmdTopologyGraph.renderDirectionalTopology) {
-      CmdTopologyGraph.renderDirectionalTopology(
-        mapContainer,
-        this.state.topologyData,
-        this.state.logsByFlowId,
-        this.state.selectedNodeId,
-        (nodeId, logsForNode, meta) => {
-          this.selectNodeAndInspect(nodeId, logsForNode, meta);
-        }
-      );
-    }
+    // Render Directional Graph via active view renderer
+    await this.renderActiveView();
+  },
 
-    // Inspect initial selected node
-    const initialLogs = logsByFlowId[this.state.selectedNodeId] || [];
-    this.selectNodeAndInspect(this.state.selectedNodeId, initialLogs);
+  /**
+   * Renders the active graph view (Runtime Execution Path vs Static Package Architecture).
+   */
+  async renderActiveView() {
+    const mapContainer = document.querySelector("#cmd-topology-map-container");
+    if (!mapContainer) return;
+
+    if (this.state.viewMode === "static") {
+      if (!this.state.staticTopologyData) {
+        mapContainer.innerHTML = `<div class="ui active centered inline loader" style="margin-top: 150px;"></div><div style="text-align: center; color: #666; margin-top: 10px;">Discovering Static Package Architecture...</div>`;
+        if (typeof CmdStaticArchitectureDiscovery !== "undefined") {
+          try {
+            this.state.staticTopologyData = await CmdStaticArchitectureDiscovery.buildStaticPackageTopology(this.state.packageId, this.state.rootFlowId);
+          } catch (eStatic) {
+            console.warn("Failed discovering static package architecture:", eStatic);
+            this.state.staticTopologyData = { nodes: [], edges: [], levels: {}, flowModels: {} };
+          }
+        }
+      }
+
+      if (!this.state.selectedNodeId || !this.state.staticTopologyData?.nodes?.some((n) => n.id === this.state.selectedNodeId)) {
+        this.state.selectedNodeId = this.state.staticTopologyData?.nodes?.[0]?.id || this.state.rootFlowId;
+      }
+
+      if (typeof CmdTopologyGraph !== "undefined" && CmdTopologyGraph.renderDirectionalTopology) {
+        CmdTopologyGraph.renderDirectionalTopology(
+          mapContainer,
+          this.state.staticTopologyData,
+          {},
+          this.state.selectedNodeId,
+          (nodeId, logsForNode, meta) => {
+            this.selectNodeAndInspect(nodeId, logsForNode, meta);
+          }
+        );
+      }
+
+      this.selectNodeAndInspect(this.state.selectedNodeId, [], {});
+    } else {
+      // Runtime view
+      if (!this.state.selectedNodeId || !this.state.topologyData?.nodes?.some((n) => n.id === this.state.selectedNodeId)) {
+        this.state.selectedNodeId = this.state.topologyData?.nodes?.[0]?.id || this.state.rootFlowId;
+      }
+
+      if (typeof CmdTopologyGraph !== "undefined" && CmdTopologyGraph.renderDirectionalTopology) {
+        CmdTopologyGraph.renderDirectionalTopology(
+          mapContainer,
+          this.state.topologyData,
+          this.state.logsByFlowId,
+          this.state.selectedNodeId,
+          (nodeId, logsForNode, meta) => {
+            this.selectNodeAndInspect(nodeId, logsForNode, meta);
+          }
+        );
+      }
+
+      const initialLogs = this.state.logsByFlowId[this.state.selectedNodeId] || [];
+      this.selectNodeAndInspect(this.state.selectedNodeId, initialLogs, {});
+    }
   },
 
   /**
@@ -420,6 +505,12 @@ const CmdDebuggerModal = {
           <span style="color: #b45309; font-family: monospace;">${meta.rawAddress || meta.address}</span>
           <span class="ui mini yellow label" style="margin-left: 6px; font-weight: normal;">UNRESOLVED OUTBOUND</span>
         `;
+      } else if (this.state.viewMode === "static") {
+        const isRoot = this.state.staticTopologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
+        titleEl.innerHTML = `
+          <span style="color: ${isRoot ? "#0284c7" : "#334155"};">${nodeId}</span>
+          <span class="ui mini teal label" style="margin-left: 6px; font-weight: normal;">STATIC ARTIFACT</span>
+        `;
       } else {
         const isRoot = this.state.topologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
         titleEl.innerHTML = `
@@ -430,9 +521,9 @@ const CmdDebuggerModal = {
       }
     }
 
-    // Per-node run instance dropdown (especially useful for Iterators/Splitters)
+    // Per-node run instance dropdown (especially useful for Iterators/Splitters in runtime mode)
     if (instanceContainer && instanceSelect) {
-      if (logsForNode.length > 1) {
+      if (this.state.viewMode === "runtime" && logsForNode.length > 1) {
         instanceContainer.style.display = "block";
         instanceSelect.innerHTML = "";
 
@@ -460,7 +551,7 @@ const CmdDebuggerModal = {
       }
     }
 
-    // Inspect the selected run instance
+    // Inspect the selected node content
     if (inspectorContainer) {
       if (meta.isHanging) {
         inspectorContainer.innerHTML = `
@@ -469,7 +560,39 @@ const CmdDebuggerModal = {
             <div style="font-weight: 600; font-size: 0.95rem;">Unresolved Outbound Channel</div>
             <div style="font-family: monospace; font-size: 1.05rem; font-weight: bold; margin-top: 6px; color: #b45309;">${meta.rawAddress || meta.address}</div>
             <div style="font-size: 0.82rem; margin-top: 8px; color: #78350f; max-width: 380px; margin-left: auto; margin-right: auto; line-height: 1.5;">
-              This ProcessDirect channel was defined in the BPMN model of <b>${meta.callerId}</b>, but no matching child iFlow was traversed or deployed during this correlation run.
+              This ProcessDirect channel was defined in the BPMN model of <b>${meta.callerId}</b>, but no matching child iFlow was traversed or deployed during this run.
+            </div>
+          </div>
+        `;
+      } else if (this.state.viewMode === "static") {
+        const model = this.state.staticTopologyData?.flowModels?.[nodeId] || { inbound: [], outbound: [], paramMap: {} };
+        const inboundsHtml = (model.inbound || []).length > 0
+          ? model.inbound.map((i) => `<div style="padding: 6px 10px; background: #e0f2fe; color: #0369a1; border-radius: 4px; font-family: monospace; font-size: 0.82rem; margin-bottom: 5px; border-left: 3px solid #0284c7;"><b>Inbound:</b> ${i.address}</div>`).join("")
+          : `<div style="color: #94a3b8; font-size: 0.82rem; padding: 4px 0;">No inbound ProcessDirect endpoints defined</div>`;
+
+        const outboundsHtml = (model.outbound || []).length > 0
+          ? model.outbound.map((o) => `<div style="padding: 6px 10px; background: #fef3c7; color: #92400e; border-radius: 4px; font-family: monospace; font-size: 0.82rem; margin-bottom: 5px; border-left: 3px solid #f59e0b;"><b>Outbound:</b> ${o.address}${o.rawAddress && o.rawAddress !== o.address ? ` <span style="color: #78350f; font-size: 0.78rem;">(raw: ${o.rawAddress})</span>` : ""}</div>`).join("")
+          : `<div style="color: #94a3b8; font-size: 0.82rem; padding: 4px 0;">No outbound ProcessDirect calls defined</div>`;
+
+        const paramsEntries = Object.entries(model.paramMap || {});
+        const paramsHtml = paramsEntries.length > 0
+          ? paramsEntries.map(([k, v]) => `<tr><td style="font-family: monospace; font-size: 0.78rem; font-weight: bold; color: #334155;">${k}</td><td style="font-family: monospace; font-size: 0.78rem; color: #0284c7;">${v}</td></tr>`).join("")
+          : `<tr><td colspan="2" style="color: #94a3b8; font-size: 0.8rem; text-align: center; padding: 12px 0;">No externalized parameters configured</td></tr>`;
+
+        inspectorContainer.innerHTML = `
+          <div style="padding: 8px 4px; overflow-y: auto;">
+            <div style="font-size: 0.85rem; font-weight: bold; color: #334155; margin-bottom: 6px;">ProcessDirect Inbounds:</div>
+            <div style="margin-bottom: 14px;">${inboundsHtml}</div>
+
+            <div style="font-size: 0.85rem; font-weight: bold; color: #334155; margin-bottom: 6px;">ProcessDirect Outbounds:</div>
+            <div style="margin-bottom: 14px;">${outboundsHtml}</div>
+
+            <div style="font-size: 0.85rem; font-weight: bold; color: #334155; margin-bottom: 6px;">Externalized Parameters:</div>
+            <div style="max-height: 220px; overflow-y: auto; border: 1px solid #e2e8f0; border-radius: 4px;">
+              <table class="ui very basic compact table" style="margin: 0;">
+                <thead style="background: #f8fafc;"><tr><th style="padding: 6px 8px;">Key</th><th style="padding: 6px 8px;">Value</th></tr></thead>
+                <tbody>${paramsHtml}</tbody>
+              </table>
             </div>
           </div>
         `;
