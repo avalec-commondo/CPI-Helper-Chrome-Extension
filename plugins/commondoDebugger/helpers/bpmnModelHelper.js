@@ -104,11 +104,27 @@ const CmdBpmnModelHelper = {
             } catch (eDef) {}
           }
 
+          // Extract metadata from metainfo.prop if present
+          let flowMetaName = "";
+          let flowMetaDesc = "";
+          const metaFile = Object.keys(zip.files).find((fn) => fn.endsWith("metainfo.prop"));
+          if (metaFile) {
+            try {
+              const metaText = await zip.files[metaFile].async("string");
+              metaText.split(/\r?\n/).forEach((line) => {
+                const trimmed = line.trim();
+                if (trimmed.startsWith("name=")) flowMetaName = trimmed.substring(5).trim();
+                if (trimmed.startsWith("description=")) flowMetaDesc = trimmed.substring(12).trim();
+              });
+            } catch (eMetaProp) {}
+          }
+
           // 2. Find BPMN scenario flow XML
           const iflw = Object.keys(zip.files).find((fn) => fn.endsWith(".iflw") || fn.endsWith(".bpmn") || fn.includes("scenarioflows"));
           if (iflw) {
             console.log(`[ZIP Download] Found BPMN scenario XML file: "${iflw}"`);
-            return await zip.files[iflw].async("string");
+            const xmlContent = await zip.files[iflw].async("string");
+            return { xmlContent, flowMetaName, flowMetaDesc };
           }
         }
       } catch (e) {
@@ -288,13 +304,14 @@ const CmdBpmnModelHelper = {
       toAbsoluteUrl(`odata/api/v1/IntegrationDesigntimeArtifacts(Id='${encodeURIComponent(iflowId)}',Version='active')/$value`),
     ];
 
+    let zipResult = null;
     for (const u of candidateUrls) {
-      bpmnXml = await tryDownloadZip(u);
-      if (bpmnXml) break;
+      zipResult = await tryDownloadZip(u);
+      if (zipResult) break;
     }
 
     // 3. If needed, query real version via OData and download exact version value
-    if (!bpmnXml) {
+    if (!zipResult) {
       try {
         const metaUrls = [
           toAbsoluteUrl(`api/v1/IntegrationDesigntimeArtifacts?$format=json&$filter=Id eq '${encodeURIComponent(iflowId)}'&$select=Id,Version`),
@@ -323,12 +340,16 @@ const CmdBpmnModelHelper = {
           ];
 
           for (const vu of versionUrls) {
-            bpmnXml = await tryDownloadZip(vu);
-            if (bpmnXml) break;
+            zipResult = await tryDownloadZip(vu);
+            if (zipResult) break;
           }
         }
       } catch (eMeta) {}
     }
+
+    bpmnXml = zipResult?.xmlContent || (typeof zipResult === "string" ? zipResult : null);
+    let flowName = zipResult?.flowMetaName || "";
+    let flowDescription = zipResult?.flowMetaDesc || "";
 
     const outbound = [];
     const inbound = [];
@@ -339,6 +360,27 @@ const CmdBpmnModelHelper = {
       try {
         const parser = new DOMParser();
         const xmlDoc = parser.parseFromString(bpmnXml, "text/xml");
+
+        // Extract flow name from BPMN XML if not already set
+        if (!flowName) {
+          const collabs = xmlDoc.getElementsByTagNameNS("*", "collaboration");
+          for (let c = 0; c < collabs.length; c++) {
+            const cn = collabs[c].getAttribute("name");
+            if (cn && cn.trim() && cn !== collabs[c].getAttribute("id") && cn !== "Default Collaboration") {
+              flowName = cn.trim();
+              break;
+            }
+          }
+        }
+
+        // Extract flow description from BPMN XML if not already set
+        if (!flowDescription) {
+          const docs = xmlDoc.getElementsByTagNameNS("*", "documentation");
+          if (docs.length > 0) {
+            const dt = docs[0].textContent.trim();
+            if (dt) flowDescription = dt;
+          }
+        }
 
         // Step names
         const allEls = xmlDoc.getElementsByTagName("*");
@@ -491,9 +533,25 @@ const CmdBpmnModelHelper = {
       }
     }
 
-    const result = { iflowId, outbound, inbound, steps, paramMap };
+    const result = {
+      iflowId,
+      flowName: flowName || iflowId,
+      flowDescription: flowDescription || "",
+      outbound,
+      inbound,
+      steps,
+      paramMap,
+    };
     iflowBpmnModelCache.set(iflowId, result);
     return result;
+  },
+
+  /**
+   * Get cached BPMN model synchronously.
+   */
+  getBpmnModelFromCache(iflowId) {
+    if (!iflowId) return null;
+    return iflowBpmnModelCache.get(iflowId) || iflowBpmnModelCache.get(iflowId.toLowerCase()) || null;
   },
 };
 

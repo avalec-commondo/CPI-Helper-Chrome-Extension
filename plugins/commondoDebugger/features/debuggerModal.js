@@ -1,11 +1,12 @@
-// ===========================================================================
-// COMMODNO IS DEBUGGER - DEBUGGER MODAL FEATURE
-// ===========================================================================
-// Assembles and manages the main multi-tier trace inspection modal dialog:
-// 1. BPMN-driven Directional Topology Graph (DAG) with ProcessDirect endpoints.
-// 2. Global Execution Run Selector (Correlation ID call-chain loader).
-// 3. Per-Node Run Instance Dropdown (for Iterators, Splitters, and Loops).
-// 4. Integrated Step Inspector and Live TRACE Countdown Timers.
+const escapeHtml = (str) => {
+  if (!str) return "";
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
 
 const CmdDebuggerModal = {
   state: {
@@ -494,6 +495,14 @@ const CmdDebuggerModal = {
     this.state.selectedNodeId = nodeId;
     this.state.selectedNodeRunIndex = 0;
 
+    let resolvedLogs = (Array.isArray(logsForNode) && logsForNode.length > 0) ? logsForNode : [];
+    if (resolvedLogs.length === 0 && this.state.logsByFlowId) {
+      resolvedLogs = this.state.logsByFlowId[nodeId]
+        || this.state.logsByFlowId[nodeId?.toLowerCase?.()]
+        || this.state.logsByFlowId[String(nodeId).trim().toLowerCase().replace(/[\s\-_]+/g, "")]
+        || [];
+    }
+
     const titleEl = document.querySelector("#cmd-selected-node-title");
     const instanceContainer = document.querySelector("#cmd-node-instance-selector-container");
     const instanceSelect = document.querySelector("#cmd-node-instance-select");
@@ -507,33 +516,80 @@ const CmdDebuggerModal = {
         `;
       } else if (this.state.viewMode === "static") {
         const isRoot = this.state.staticTopologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
+        const bpmnModel = this.state.staticTopologyData?.flowModels?.[nodeId] || (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.getBpmnModelFromCache ? CmdBpmnModelHelper.getBpmnModelFromCache(nodeId) : null);
+        const artifactName = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getArtifactName ? CmdCpiApiHelper.getArtifactName(nodeId) : "") || bpmnModel?.flowName || nodeId;
+        const bpmnDesc = bpmnModel?.flowDescription || "";
+
+        const iflowUrl = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getIFlowDesignUrl)
+          ? CmdCpiApiHelper.getIFlowDesignUrl(nodeId, this.state.packageId)
+          : "#";
+
         titleEl.innerHTML = `
-          <span style="color: ${isRoot ? "#0284c7" : "#334155"};">${nodeId}</span>
-          <span class="ui mini teal label" style="margin-left: 6px; font-weight: normal;">STATIC ARTIFACT</span>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="color: ${isRoot ? "#0284c7" : "#0f172a"}; font-weight: bold; font-size: 1.05rem;">${escapeHtml(artifactName)}</span>
+            <a href="${iflowUrl}" target="_blank" class="ui mini basic button" style="padding: 2px 8px; font-size: 0.72rem; font-weight: 600; text-decoration: none; color: #0f766e; border-color: #99f6e4; background: #f0fdfa; border-radius: 4px;" title="Open in new tab">
+              <i class="external alternate icon" style="margin-right: 3px; font-size: 0.75rem;"></i> Open iFlow
+            </a>
+          </div>
+          <div style="font-size: 0.78rem; font-family: monospace; color: #64748b; margin-top: 2px;">
+            Technical ID: <span style="color: #334155; font-weight: 600;">${escapeHtml(nodeId)}</span>
+          </div>
+          ${bpmnDesc ? `<div style="font-size: 0.76rem; color: #64748b; margin-top: 2px;">Description: <i>${escapeHtml(bpmnDesc)}</i></div>` : ""}
         `;
       } else {
         const isRoot = this.state.topologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
+        const bpmnModel = (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.getBpmnModelFromCache)
+          ? CmdBpmnModelHelper.getBpmnModelFromCache(nodeId)
+          : (this.state.staticTopologyData?.flowModels?.[nodeId] || null);
+
+        const artifactName = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getArtifactName ? CmdCpiApiHelper.getArtifactName(nodeId) : "")
+          || bpmnModel?.flowName
+          || resolvedLogs[0]?.IntegrationArtifact?.Name
+          || resolvedLogs[0]?.IntegrationFlowName
+          || nodeId;
+        const bpmnDesc = bpmnModel?.flowDescription || "";
+        const activeLog = resolvedLogs[this.state.selectedNodeRunIndex] || resolvedLogs[0];
+
+        const pkgId = resolvedLogs[0]?.IntegrationArtifact?.PackageId || this.state.packageId || "";
+        const iflowUrl = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getIFlowDesignUrl)
+          ? CmdCpiApiHelper.getIFlowDesignUrl(nodeId, pkgId)
+          : "#";
+
         titleEl.innerHTML = `
-          <span style="color: ${isRoot ? "#0284c7" : "#334155"};">${nodeId}</span>
-          <span class="ui mini label" style="margin-left: 6px; font-weight: normal;">${isRoot ? "ROOT FLOW" : "CHILD FLOW"}</span>
-          <span style="font-size: 0.8rem; font-weight: normal; color: #64748b; margin-left: 8px;">(${logsForNode.length} run ${logsForNode.length === 1 ? "instance" : "instances"} found)</span>
+          <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+            <span style="color: ${isRoot ? "#0284c7" : "#0f172a"}; font-weight: bold; font-size: 1.05rem;">${escapeHtml(artifactName)}</span>
+            <a href="${iflowUrl}" target="_blank" class="ui mini basic button" style="padding: 2px 8px; font-size: 0.72rem; font-weight: 600; text-decoration: none; color: #0284c7; border-color: #bae6fd; background: #f0f9ff; border-radius: 4px;" title="Open in new tab">
+              <i class="external alternate icon" style="margin-right: 3px; font-size: 0.75rem;"></i> Open iFlow
+            </a>
+            <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">(${resolvedLogs.length} run ${resolvedLogs.length === 1 ? "instance" : "instances"} found)</span>
+          </div>
+          <div style="font-size: 0.78rem; font-family: monospace; color: #64748b; margin-top: 2px;">
+            Technical ID: <span style="color: #334155; font-weight: 600;">${escapeHtml(nodeId)}</span>
+          </div>
+          ${bpmnDesc ? `<div style="font-size: 0.76rem; color: #64748b; margin-top: 2px;">Description: <i>${escapeHtml(bpmnDesc)}</i></div>` : ""}
+          ${activeLog ? `
+            <div style="font-size: 0.78rem; color: #475569; margin-top: 4px;">
+              <b>Status:</b> <span class="ui mini label ${activeLog.Status === "COMPLETED" ? "green" : activeLog.Status === "FAILED" ? "red" : "orange"}" style="padding: 2px 6px; font-weight: normal;">${escapeHtml(activeLog.Status || "UNKNOWN")}</span>
+              <span style="margin-left: 6px;"><b>LogLevel:</b> ${escapeHtml(activeLog.LogLevel || "INFO")}</span>
+            </div>
+          ` : ""}
         `;
       }
     }
 
     // Per-node run instance dropdown (especially useful for Iterators/Splitters in runtime mode)
     if (instanceContainer && instanceSelect) {
-      if (this.state.viewMode === "runtime" && logsForNode.length > 1) {
+      if (this.state.viewMode === "runtime" && resolvedLogs.length > 1) {
         instanceContainer.style.display = "block";
         instanceSelect.innerHTML = "";
 
-        logsForNode.forEach((log, idx) => {
+        resolvedLogs.forEach((log, idx) => {
           const opt = document.createElement("option");
           opt.value = idx;
 
           const timeStr = log.LogStart ? new Date(parseInt(log.LogStart.substr(6, 13) || Date.now())).toLocaleTimeString() : `Run #${idx + 1}`;
           const status = log.Status || "COMPLETED";
-          opt.textContent = `Run #${idx + 1} of ${logsForNode.length}: ${timeStr} [${status}]`;
+          opt.textContent = `Run #${idx + 1} of ${resolvedLogs.length}: ${timeStr} [${status}]`;
 
           if (idx === 0) opt.selected = true;
           instanceSelect.appendChild(opt);
@@ -542,8 +598,8 @@ const CmdDebuggerModal = {
         instanceSelect.onchange = (e) => {
           const chosenIdx = parseInt(e.target.value, 10) || 0;
           this.state.selectedNodeRunIndex = chosenIdx;
-          if (typeof CmdStepInspector !== "undefined" && logsForNode[chosenIdx]) {
-            CmdStepInspector.inspectStepDetails(inspectorContainer, logsForNode[chosenIdx]);
+          if (typeof CmdStepInspector !== "undefined" && resolvedLogs[chosenIdx]) {
+            CmdStepInspector.inspectStepDetails(inspectorContainer, resolvedLogs[chosenIdx]);
           }
         };
       } else {
@@ -596,8 +652,8 @@ const CmdDebuggerModal = {
             </div>
           </div>
         `;
-      } else if (logsForNode.length > 0) {
-        const activeLog = logsForNode[this.state.selectedNodeRunIndex] || logsForNode[0];
+      } else if (resolvedLogs.length > 0) {
+        const activeLog = resolvedLogs[this.state.selectedNodeRunIndex] || resolvedLogs[0];
         if (typeof CmdStepInspector !== "undefined") {
           CmdStepInspector.inspectStepDetails(inspectorContainer, activeLog);
         }

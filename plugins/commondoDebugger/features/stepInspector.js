@@ -59,27 +59,24 @@ const CmdStepInspector = {
 
     const iFlowId = logEntry.IntegrationArtifact?.Id || logEntry.IntegrationFlowName || "iFlow";
     let stepNameMap = {};
+    let bpmnFlowName = "";
     if (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.fetchIFlowBpmnModel) {
       try {
         const bpmnModel = await CmdBpmnModelHelper.fetchIFlowBpmnModel(iFlowId);
         stepNameMap = bpmnModel?.steps || {};
+        bpmnFlowName = bpmnModel?.flowName || "";
       } catch (eB) {}
     }
 
-    const wrapper = document.createElement("div");
-    wrapper.style.cssText = "height: 100%; display: flex; flex-direction: column; min-height: 0;";
-    wrapper.innerHTML = `
-      <div style="flex-shrink: 0; margin-bottom: 10px; font-size: 0.85rem; color: #334155; background: #f1f5f9; padding: 8px 12px; border-radius: 6px; border-left: 4px solid #0070f3;">
-        <div style="font-weight: bold; font-size: 0.92rem; margin-bottom: 3px;">${escapeHtml(logEntry.IntegrationFlowName || iFlowId)}</div>
-        <div style="color: #64748b; font-size: 0.78rem;">
-          <b>Status:</b> ${escapeHtml(logEntry.Status)} | <b>LogLevel:</b> ${escapeHtml(logEntry.LogLevel || "INFO")} | <b>Steps:</b> ${steps.length}
-        </div>
-      </div>
-      <div id="cmd-steps-list-container" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;"></div>
-    `;
+    const artifactName = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getArtifactName ? CmdCpiApiHelper.getArtifactName(iFlowId) : "")
+      || bpmnFlowName
+      || logEntry.IntegrationArtifact?.Name
+      || logEntry.IntegrationFlowName
+      || iFlowId;
 
-    container.innerHTML = "";
-    container.appendChild(wrapper);
+    container.innerHTML = `
+      <div id="cmd-steps-list-container" style="height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;"></div>
+    `;
 
     const stepsListDiv = container.querySelector("#cmd-steps-list-container");
 

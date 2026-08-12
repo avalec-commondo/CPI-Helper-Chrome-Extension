@@ -397,7 +397,16 @@ const CmdTopologyGraph = {
           else if (status.match(/^(RETRY|ESCALATED|CANCELLED|DISCARDED)$/)) statusColor = "#f59e0b";
         }
 
-        let rawName = flowId;
+        const bpmnModel = (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.getBpmnModelFromCache) ? CmdBpmnModelHelper.getBpmnModelFromCache(flowId) : null;
+        const artName = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getArtifactName ? CmdCpiApiHelper.getArtifactName(flowId) : "")
+          || bpmnModel?.flowName
+          || logs[0]?.IntegrationArtifact?.Name
+          || logs[0]?.IntegrationFlowName
+          || node.displayName
+          || node.name
+          || flowId;
+
+        let rawName = artName;
         if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
         const displayName = escapeHtml(rawName);
 
@@ -415,7 +424,7 @@ const CmdTopologyGraph = {
                 : "";
 
         nodeG.innerHTML = `
-          <title>${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
+          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
           <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
                 fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
                 stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"

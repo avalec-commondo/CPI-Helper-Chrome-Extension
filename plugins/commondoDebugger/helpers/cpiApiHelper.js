@@ -9,8 +9,72 @@ const packageArtifactsCache = new Map();
 let deployedArtifactsCache = null;
 
 const artifactGuidMap = new Map();
+const artifactNameMap = new Map();
+const artifactPackageMap = new Map();
 
 const CmdCpiApiHelper = {
+  /**
+   * Register human-readable artifact name for an ID.
+   */
+  registerArtifactName(id, name) {
+    if (!id || !name) return;
+    artifactNameMap.set(id, name);
+    artifactNameMap.set(id.toLowerCase(), name);
+    const norm = String(id).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+    if (norm) artifactNameMap.set(norm, name);
+  },
+
+  /**
+   * Get human-readable artifact name for an ID.
+   */
+  getArtifactName(id) {
+    if (!id) return "";
+    if (artifactNameMap.has(id)) return artifactNameMap.get(id);
+    if (artifactNameMap.has(id.toLowerCase())) return artifactNameMap.get(id.toLowerCase());
+    const norm = String(id).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+    if (artifactNameMap.has(norm)) return artifactNameMap.get(norm);
+    return "";
+  },
+
+  /**
+   * Register package ID for an artifact.
+   */
+  registerArtifactPackageId(id, packageId) {
+    if (!id || !packageId) return;
+    artifactPackageMap.set(id, packageId);
+    artifactPackageMap.set(id.toLowerCase(), packageId);
+    const norm = String(id).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+    if (norm) artifactPackageMap.set(norm, packageId);
+  },
+
+  /**
+   * Get package ID for an artifact.
+   */
+  getArtifactPackageId(id) {
+    if (!id) return "";
+    if (artifactPackageMap.has(id)) return artifactPackageMap.get(id);
+    if (artifactPackageMap.has(id.toLowerCase())) return artifactPackageMap.get(id.toLowerCase());
+    const norm = String(id).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+    if (artifactPackageMap.has(norm)) return artifactPackageMap.get(norm);
+    return "";
+  },
+
+  /**
+   * Build guaranteed direct design-time URL for any iFlow across Cloud Foundry, Neo, and Edge Integration Cell.
+   */
+  getIFlowDesignUrl(iflowId, fallbackPkgId = "") {
+    if (!iflowId) return "#";
+    const tenant = (typeof cpiData !== "undefined" && cpiData.tenant) ? cpiData.tenant : window.location.host;
+    let urlExt = (typeof cpiData !== "undefined" && cpiData.urlExtension) ? cpiData.urlExtension : "";
+    if (urlExt && !urlExt.endsWith("/")) urlExt += "/";
+
+    const pkgId = this.getArtifactPackageId(iflowId) || fallbackPkgId;
+    if (pkgId) {
+      return `https://${tenant}/${urlExt}shell/design/contentpackage/${encodeURIComponent(pkgId)}/integrationflows/${encodeURIComponent(iflowId)}`;
+    }
+    return `https://${tenant}/${urlExt}shell/design/integrationflows/${encodeURIComponent(iflowId)}`;
+  },
+
   /**
    * Robust API URL builder for Cloud Foundry (CF), Neo, and Edge Integration Cell.
    */
@@ -206,6 +270,10 @@ const CmdCpiApiHelper = {
                   packageArts.push({ id, name, packageId, type, entityId: id, rawId: id });
                   artifactGuidMap.set(id, id);
                   artifactGuidMap.set(name, id);
+                  this.registerArtifactName(id, name);
+                  this.registerArtifactName(name, name);
+                  this.registerArtifactPackageId(id, packageId);
+                  this.registerArtifactPackageId(name, packageId);
                 }
               });
               break;
@@ -256,6 +324,15 @@ const CmdCpiApiHelper = {
                 if (a.tooltip) artifactGuidMap.set(a.tooltip, entityId);
                 if (a.additionalAttrs?.OriginBundleSymbolicName) {
                   a.additionalAttrs.OriginBundleSymbolicName.forEach((s) => artifactGuidMap.set(s, entityId));
+                }
+
+                if (symName && name) {
+                  this.registerArtifactName(symName, name);
+                  this.registerArtifactName(entityId, name);
+                  this.registerArtifactName(rawId, name);
+                  this.registerArtifactPackageId(symName, packageId);
+                  this.registerArtifactPackageId(entityId, packageId);
+                  this.registerArtifactPackageId(rawId, packageId);
                 }
               });
               break;
