@@ -24,15 +24,38 @@ const CmdProcessDirectDiscovery = {
       };
     }
 
-    // 1. Group correlation logs by flow ID
+    // 1. Group correlation logs by flow ID (supporting technical ID, display name, and normalized ID)
     const logsByFlowId = {};
+    const primaryFlowIds = new Set();
+
     correlationLogs.forEach((log) => {
-      const flowId = log.IntegrationFlowName || log.IntegrationArtifact?.Id || "iFlow";
-      if (!logsByFlowId[flowId]) logsByFlowId[flowId] = [];
-      logsByFlowId[flowId].push(log);
+      const artId = log.IntegrationArtifact?.Id || "";
+      const flowName = log.IntegrationFlowName || "";
+      const primaryId = artId || flowName || "iFlow";
+      primaryFlowIds.add(primaryId);
+
+      if (!logsByFlowId[primaryId]) logsByFlowId[primaryId] = [];
+      logsByFlowId[primaryId].push(log);
+
+      if (artId && flowName && artId !== flowName) {
+        if (!logsByFlowId[flowName]) logsByFlowId[flowName] = [];
+        logsByFlowId[flowName].push(log);
+      }
+
+      const norm = String(primaryId).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+      if (norm && !logsByFlowId[norm]) {
+        logsByFlowId[norm] = logsByFlowId[primaryId];
+      }
     });
 
-    const executedFlowIds = Object.keys(logsByFlowId);
+    function getLogsForFlow(flowId) {
+      if (!flowId) return [];
+      if (logsByFlowId[flowId]) return logsByFlowId[flowId];
+      const norm = String(flowId).trim().toLowerCase().replace(/[\s\-_]+/g, "");
+      return logsByFlowId[norm] || [];
+    }
+
+    const executedFlowIds = Array.from(primaryFlowIds);
     const pkgId = packageId || (await apiHelper.resolveCurrentPackageId(rootFlowId));
     const flowModels = {};
     const inboundRegistry = []; // { flowId, address, normalized }
@@ -146,140 +169,171 @@ const CmdProcessDirectDiscovery = {
       }
 
       const model = flowModels[callerId] || { outbound: [], paramMap: {} };
-      const callerLogs = logsByFlowId[callerId] || [];
+      const callerLogs = getLogsForFlow(callerId);
 
-      // Lazy load trace data if caller has dynamic outbounds and trace is available
+      // Lazy load trace data whenever caller has logs and outbound channels
       let traceData = null;
-      const hasDynamicOutbounds = model.outbound.some((o) => {
-        const n = (o.address || "").trim().toLowerCase();
-        return n.includes("${") || n.includes("{{") || !n.startsWith("/");
-      });
-
-      if (hasDynamicOutbounds && callerLogs.length > 0 && typeof CmdTracePayloadHelper !== "undefined") {
+      if (model.outbound.length > 0 && callerLogs.length > 0 && typeof CmdTracePayloadHelper !== "undefined") {
         for (const log of callerLogs) {
-          if (log.MessageGuid && (log.LogLevel === "TRACE" || !traceData)) {
+          const msgGuid = log.MessageGuid || log.MessageId || log.Id;
+          if (msgGuid && (String(log.LogLevel).toUpperCase() === "TRACE" || !traceData)) {
             try {
-              traceData = await CmdTracePayloadHelper.fetchRunTraceHeadersAndProperties(log.MessageGuid);
-              if (traceData && (Object.keys(traceData.properties || {}).length > 0 || Object.keys(traceData.headers || {}).length > 0)) {
+              console.log(`[Trace Loader] Querying trace for "${callerId}" (MessageGuid: ${msgGuid}, LogLevel: ${log.LogLevel})...`);
+              traceData = await CmdTracePayloadHelper.fetchRunTraceHeadersAndProperties(msgGuid);
+              if (traceData && (Object.keys(traceData.properties || {}).length > 0 || Object.keys(traceData.headers || {}).length > 0 || (traceData.executedStepIds && traceData.executedStepIds.length > 0))) {
                 break;
               }
-            } catch (eTrace) {}
+            } catch (eTrace) {
+              console.warn(`[Trace Loader] Failed querying trace for "${callerId}":`, eTrace);
+            }
           }
         }
       }
 
+      console.log(`\n%c[Flow Evaluation] Caller: "${callerId}" (Outbound channels: ${model.outbound.length})`, "color: #8b5cf6; font-weight: bold;");
+      if (traceData) {
+        console.log(`  Trace for "${callerId}":`, {
+          propertiesCount: Object.keys(traceData.properties || {}).length,
+          headersCount: Object.keys(traceData.headers || {}).length,
+          executedStepIds: traceData.executedStepIds || [],
+          headerSample: { iflowid: traceData.headers?.iflowid, iflowId: traceData.headers?.iflowId }
+        });
+      }
+
       for (const outChan of model.outbound) {
+        const chanId = outChan.id;
+        const sourceRef = outChan.sourceRef;
+        const targetRef = outChan.targetRef;
         const rawAddress = (outChan.address || "").trim();
         const normOut = rawAddress.toLowerCase();
+        const isDynamicExpr = normOut.includes("${") || normOut.includes("{{") || !normOut.startsWith("/");
+
+        // 1. Runtime Traversal Verification:
+        // If traceData contains executedStepIds, verify that this specific outbound channel (or its connecting source shape) was executed.
+        let isTraversed = true;
+        let traversalReason = "Single outbound or no trace step filters";
+
+        if (traceData && Array.isArray(traceData.executedStepIds) && traceData.executedStepIds.length > 0) {
+          const stepSet = new Set(traceData.executedStepIds.map((s) => String(s).toLowerCase()));
+          const anyKnown = model.outbound.some((o) =>
+            (o.id && stepSet.has(o.id.toLowerCase())) ||
+            (o.sourceRef && stepSet.has(o.sourceRef.toLowerCase())) ||
+            (o.targetRef && stepSet.has(o.targetRef.toLowerCase()))
+          );
+
+          if (anyKnown || model.outbound.length > 1) {
+            const thisExecuted =
+              (chanId && stepSet.has(chanId.toLowerCase())) ||
+              (sourceRef && stepSet.has(sourceRef.toLowerCase())) ||
+              (targetRef && stepSet.has(targetRef.toLowerCase()));
+
+            if (!thisExecuted) {
+              isTraversed = false;
+              traversalReason = `Not executed in trace: shape (id="${chanId}", sourceRef="${sourceRef}", targetRef="${targetRef}") not found in executedStepIds`;
+            } else {
+              traversalReason = `Executed: shape found in executedStepIds`;
+            }
+          }
+        }
+
+        console.log(`  -> Channel "${rawAddress}" (id: ${chanId}, sourceRef: ${sourceRef}) -> isTraversed: ${isTraversed} (${traversalReason})`);
 
         let resolvedTargetFlow = null;
         let resolvedEndpointAddress = null;
         let isDynamic = false;
         let matchDescription = "";
 
-        // Pass 1: Static Match (address-to-address, address-to-flowId)
-        const directMatch = inboundRegistry.find((r) => matchAddress(r.address, rawAddress) && r.flowId !== callerId);
-        if (directMatch) {
-          resolvedTargetFlow = directMatch.flowId;
-          resolvedEndpointAddress = directMatch.address;
-          isDynamic = false;
-          matchDescription = "Static Match";
-        }
-
-        // Pass 2: Externalized Parameters (parameters.prop from caller or shared map)
-        if (!resolvedTargetFlow && rawAddress.includes("{{") && rawAddress.includes("}}")) {
-          const pName = rawAddress.replace(/.*\{\{|\}\}.*/g, "").trim();
-          let pVal = model.paramMap?.[pName] || model.paramMap?.[pName.toLowerCase()] || combinedParamMap[pName] || combinedParamMap[pName.toLowerCase()];
-          // Recursive resolution if pVal is itself a {{param}}
-          if (pVal && typeof pVal === "string" && pVal.includes("{{")) {
-            const innerName = pVal.replace(/.*\{\{|\}\}.*/g, "").trim();
-            pVal = model.paramMap?.[innerName] || combinedParamMap[innerName] || combinedParamMap[innerName.toLowerCase()] || pVal;
+        if (isTraversed) {
+          // Pass 1: Static Match (address-to-address, address-to-flowId)
+          const directMatch = inboundRegistry.find((r) => matchAddress(r.address, rawAddress) && r.flowId !== callerId);
+          if (directMatch) {
+            resolvedTargetFlow = directMatch.flowId;
+            resolvedEndpointAddress = directMatch.address;
+            isDynamic = false;
+            matchDescription = "Static Match";
           }
-          if (pVal) {
-            const pMatch = inboundRegistry.find((r) => matchAddress(r.address, pVal) && r.flowId !== callerId)
-                        || inboundRegistry.find((r) => matchAddress(r.flowId, pVal) && r.flowId !== callerId);
-            if (pMatch) {
-              resolvedTargetFlow = pMatch.flowId;
-              resolvedEndpointAddress = pMatch.address;
-              isDynamic = false;
-              matchDescription = `Externalized Parameter (${pName} = ${pVal})`;
+
+          // Pass 2: Externalized Parameters (parameters.prop from caller or shared map)
+          if (!resolvedTargetFlow && rawAddress.includes("{{") && rawAddress.includes("}}")) {
+            const pName = rawAddress.replace(/.*\{\{|\}\}.*/g, "").trim();
+            let pVal = model.paramMap?.[pName] || model.paramMap?.[pName.toLowerCase()] || combinedParamMap[pName] || combinedParamMap[pName.toLowerCase()];
+            // Recursive resolution if pVal is itself a {{param}}
+            if (pVal && typeof pVal === "string" && pVal.includes("{{")) {
+              const innerName = pVal.replace(/.*\{\{|\}\}.*/g, "").trim();
+              pVal = model.paramMap?.[innerName] || combinedParamMap[innerName] || combinedParamMap[innerName.toLowerCase()] || pVal;
             }
-          }
-        }
-
-        // Pass 3: Trace Payload & Header/Property Inspection
-        const isDynamicExpr = normOut.includes("${") || normOut.includes("{{") || !normOut.startsWith("/");
-        if (!resolvedTargetFlow && isDynamicExpr && traceData) {
-          let traceVal = null;
-          let extractedKey = "";
-
-          // 3a. Try explicit ${property.xxx} or ${header.xxx} extraction
-          const propMatch = rawAddress.match(/\$\{(?:property\.)?([^\}]+)\}/i);
-          const headerMatch = rawAddress.match(/\$\{(?:header\.)?([^\}]+)\}/i);
-
-          if (propMatch && propMatch[1]) {
-            extractedKey = propMatch[1].trim();
-            traceVal = traceData.properties?.[extractedKey] || traceData.properties?.[extractedKey.toLowerCase()];
-          } else if (headerMatch && headerMatch[1]) {
-            extractedKey = headerMatch[1].trim();
-            traceVal = traceData.headers?.[extractedKey] || traceData.headers?.[extractedKey.toLowerCase()];
-          }
-
-          // 3b. Fallback: scan all property/header keys for substring match
-          if (!traceVal) {
-            for (const k of Object.keys(traceData.properties || {})) {
-              if (rawAddress.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawAddress.toLowerCase())) {
-                traceVal = traceData.properties[k];
-                extractedKey = k;
-                break;
+            if (pVal) {
+              const pMatch = inboundRegistry.find((r) => matchAddress(r.address, pVal) && r.flowId !== callerId)
+                          || inboundRegistry.find((r) => matchAddress(r.flowId, pVal) && r.flowId !== callerId);
+              if (pMatch) {
+                resolvedTargetFlow = pMatch.flowId;
+                resolvedEndpointAddress = pMatch.address;
+                isDynamic = false;
+                matchDescription = `Externalized Parameter (${pName} = ${pVal})`;
               }
             }
+          }
+
+          // Pass 3: Trace Payload & Header/Property Inspection
+          if (!resolvedTargetFlow && isDynamicExpr && traceData) {
+            let traceVal = null;
+            let extractedKey = "";
+
+            // 3a. Try explicit ${property.xxx} or ${header.xxx} extraction
+            const propMatch = rawAddress.match(/\$\{(?:property\.)?([^\}]+)\}/i);
+            const headerMatch = rawAddress.match(/\$\{(?:header\.)?([^\}]+)\}/i);
+
+            if (propMatch && propMatch[1]) {
+              extractedKey = propMatch[1].trim();
+              traceVal = traceData.properties?.[extractedKey] || traceData.properties?.[extractedKey.toLowerCase()];
+            } else if (headerMatch && headerMatch[1]) {
+              extractedKey = headerMatch[1].trim();
+              traceVal = traceData.headers?.[extractedKey] || traceData.headers?.[extractedKey.toLowerCase()];
+            }
+
+            // 3b. Fallback: scan all property/header keys for substring match
             if (!traceVal) {
-              for (const k of Object.keys(traceData.headers || {})) {
+              for (const k of Object.keys(traceData.properties || {})) {
                 if (rawAddress.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawAddress.toLowerCase())) {
-                  traceVal = traceData.headers[k];
+                  traceVal = traceData.properties[k];
                   extractedKey = k;
                   break;
                 }
               }
-            }
-          }
-
-          // 3c. Deep scan: check if ANY property or header value matches a known flow or endpoint
-          if (!traceVal) {
-            const allTraceValues = [
-              ...Object.values(traceData.properties || {}),
-              ...Object.values(traceData.headers || {}),
-            ].filter((v) => typeof v === "string" && v.length > 2 && (v.startsWith("/") || executedFlowIds.some((f) => matchAddress(f, v))));
-
-            for (const tv of allTraceValues) {
-              const deepMatch = inboundRegistry.find((r) => matchAddress(r.address, tv) && r.flowId !== callerId)
-                             || inboundRegistry.find((r) => matchAddress(r.flowId, tv) && r.flowId !== callerId);
-              if (deepMatch) {
-                traceVal = tv;
-                extractedKey = "Deep Trace Match";
-                resolvedTargetFlow = deepMatch.flowId;
-                resolvedEndpointAddress = deepMatch.address;
-                isDynamic = true;
-                matchDescription = `Trace Payload Deep Match (${tv} -> ${deepMatch.flowId})`;
-                break;
+              if (!traceVal) {
+                for (const k of Object.keys(traceData.headers || {})) {
+                  if (rawAddress.toLowerCase().includes(k.toLowerCase()) || k.toLowerCase().includes(rawAddress.toLowerCase())) {
+                    traceVal = traceData.headers[k];
+                    extractedKey = k;
+                    break;
+                  }
+                }
               }
             }
-          }
 
-          if (traceVal && !resolvedTargetFlow) {
-            const traceMatch = inboundRegistry.find((r) => matchAddress(r.address, traceVal) && r.flowId !== callerId)
-                            || inboundRegistry.find((r) => matchAddress(r.flowId, traceVal) && r.flowId !== callerId);
-            if (traceMatch) {
-              resolvedTargetFlow = traceMatch.flowId;
-              resolvedEndpointAddress = traceMatch.address;
-              isDynamic = true;
-              matchDescription = `Trace Payload Inspection (${extractedKey || rawAddress} = ${traceVal})`;
+            if (traceVal && !resolvedTargetFlow) {
+              const evaluatedAddress = rawAddress.includes("${")
+                ? rawAddress.replace(/\$\{(?:header\.)?([^\}]+)\}/i, traceVal).replace(/\$\{(?:property\.)?([^\}]+)\}/i, traceVal)
+                : traceVal;
+
+              console.log(`    Pass 3 Evaluation: rawAddress="${rawAddress}", extractedKey="${extractedKey}", traceVal="${traceVal}", evaluatedAddress="${evaluatedAddress}"`);
+
+              const traceMatch = inboundRegistry.find((r) => matchAddress(r.address, evaluatedAddress) && r.flowId !== callerId)
+                              || inboundRegistry.find((r) => matchAddress(r.flowId, evaluatedAddress) && r.flowId !== callerId);
+              if (traceMatch) {
+                resolvedTargetFlow = traceMatch.flowId;
+                resolvedEndpointAddress = traceMatch.address;
+                isDynamic = true;
+                matchDescription = `Trace Payload Inspection (${extractedKey || rawAddress} = ${traceVal})`;
+                console.log(`    Pass 3 Matched: "${callerId}" -> "${resolvedTargetFlow}" (address: ${resolvedEndpointAddress})`);
+              } else {
+                console.log(`    Pass 3 No match for evaluatedAddress "${evaluatedAddress}" in inboundRegistry:`, inboundRegistry);
+              }
             }
           }
         }
 
-        // Pass 4: Link Edge or Fallback to Hanging Dynamic Pill
+        // Pass 4: Link Edge or Track Unresolved Channel as Hanging Outbound
         if (resolvedTargetFlow) {
           allDiscoveredFlows.add(resolvedTargetFlow);
           if (!directedEdges.some((e) => e.from === callerId && e.to === resolvedTargetFlow && e.address === resolvedEndpointAddress)) {
@@ -305,20 +359,21 @@ const CmdProcessDirectDiscovery = {
           if (!visitedInWorkQueue.has(resolvedTargetFlow)) {
             workQueue.push(resolvedTargetFlow);
           }
-        } else if (isDynamicExpr) {
+        } else {
+          // ANY unlinked / unresolved outbound channel (static or dynamic) is captured as a Hanging Outbound
           if (!hangingByCaller[callerId]) hangingByCaller[callerId] = [];
           if (!hangingByCaller[callerId].some((h) => h.rawAddress === rawAddress)) {
             hangingByCaller[callerId].push({
               address: rawAddress,
               rawAddress: rawAddress,
-              isDynamic: true,
+              isDynamic: isDynamicExpr,
             });
             resolutionLogs.push({
               Caller: callerId,
               "Raw Outbound": rawAddress,
-              "Matched Callee": "(None - Trace Missing / Hanging Call)",
+              "Matched Callee": "(None - Unresolved / External Outbound)",
               "Resolved Address": rawAddress,
-              "Match Type": "Hanging Dynamic Endpoint",
+              "Match Type": !isTraversed ? "Unexecuted Router Branch" : (isDynamicExpr ? "Hanging Dynamic Endpoint" : "Hanging Static Endpoint"),
             });
           }
         }
@@ -330,6 +385,10 @@ const CmdProcessDirectDiscovery = {
     // link it from the caller that has unresolved hanging outbounds or dynamic outbounds.
     const flowsWithIncomingEdge = new Set(directedEdges.map((e) => e.to));
     const executedButUnlinked = executedFlowIds.filter((fId) => fId !== effectiveRoot && !flowsWithIncomingEdge.has(fId));
+
+    if (executedButUnlinked.length > 0) {
+      console.log(`\n%c[Pass 5: Correlation Inference] Unlinked executed flows:`, "color: #ef4444; font-weight: bold;", executedButUnlinked);
+    }
 
     for (const unlinkedFlow of executedButUnlinked) {
       const unlinkedModel = flowModels[unlinkedFlow] || {};
@@ -360,6 +419,8 @@ const CmdProcessDirectDiscovery = {
       if (!bestCaller && effectiveRoot !== unlinkedFlow) {
         bestCaller = effectiveRoot;
       }
+
+      console.log(`  -> Linking unlinked flow "${unlinkedFlow}" from best caller "${bestCaller}" via address "${bestInbound}"`);
 
       if (bestCaller) {
         if (!directedEdges.some((e) => e.from === bestCaller && e.to === unlinkedFlow)) {

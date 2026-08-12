@@ -89,15 +89,18 @@ const CmdBpmnModelHelper = {
               const defText = await zip.files[propDefFile].async("string");
               const parser = new DOMParser();
               const xmlDoc = parser.parseFromString(defText, "text/xml");
-              const paramEls = xmlDoc.getElementsByTagName("param");
+              const paramEls = [...xmlDoc.getElementsByTagName("parameter"), ...xmlDoc.getElementsByTagName("param")];
               for (let i = 0; i < paramEls.length; i++) {
                 const p = paramEls[i];
-                const id = p.getAttribute("id") || p.getAttribute("name");
-                const defVal = p.getAttribute("defaultValue") || p.getAttribute("value") || p.getAttribute("default");
+                const nameEl = p.getElementsByTagName("name")[0] || p.querySelector("name");
+                const valEl = p.getElementsByTagName("value")[0] || p.getElementsByTagName("defaultValue")[0] || p.querySelector("value") || p.querySelector("defaultValue");
+                const id = nameEl ? nameEl.textContent.trim() : (p.getAttribute("id") || p.getAttribute("name") || "").trim();
+                const defVal = valEl ? valEl.textContent.trim() : (p.getAttribute("defaultValue") || p.getAttribute("value") || p.getAttribute("default") || "").trim();
                 if (id && defVal && !paramMap[id]) {
-                  paramMap[id] = defVal.trim();
+                  paramMap[id] = defVal;
                 }
               }
+              console.log(`%c[BPMN Model Helper] Combined parameters for "${iflowId}":`, "color: #10b981; font-weight: bold;", paramMap);
             } catch (eDef) {}
           }
 
@@ -350,6 +353,8 @@ const CmdBpmnModelHelper = {
 
         // MessageFlows
         const messageFlows = xmlDoc.getElementsByTagNameNS("*", "messageFlow");
+        console.log(`%c[BPMN XML] Flow "${iflowId}" has ${messageFlows.length} messageFlows in XML:`, "color: #0284c7; font-weight: bold;");
+
         for (let i = 0; i < messageFlows.length; i++) {
           const mf = messageFlows[i];
           const mfId = mf.getAttribute("id") || "";
@@ -369,31 +374,45 @@ const CmdBpmnModelHelper = {
             const valEl = p.getElementsByTagNameNS("*", "value")[0] || p.querySelector("value");
             const k = keyEl ? keyEl.textContent.trim() : (p.getAttribute("key") || p.getAttribute("name") || "").trim();
             const v = valEl ? valEl.textContent.trim() : (p.getAttribute("value") || "").trim();
-            if (k === "ComponentType" || k === "adapterType" || k === "ComponentNS") componentType = v;
+            if (k.toLowerCase() === "componenttype" || k.toLowerCase() === "adaptertype") componentType = v;
             if (k.toLowerCase() === "address" || k.toLowerCase() === "url") address = v;
-            if (k === "direction") direction = v.toUpperCase();
-            if (k === "cmdVariantUri" || k === "cmdVariant") cmdVariantUri = v.toLowerCase();
+            if (k.toLowerCase() === "direction") direction = v.toUpperCase();
+            if (k.toLowerCase() === "cmdvarianturi" || k.toLowerCase() === "cmdvariant") cmdVariantUri = v.toLowerCase();
           }
 
           // Resolve externalized parameter (e.g. {{ProcessDirectAddress}} -> /real_endpoint)
+          const rawAddress = address;
           const paramMatch = address.match(/^\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}$/);
           if (paramMatch && paramMap[paramMatch[1]]) {
             address = paramMap[paramMatch[1]];
           }
 
-          // STRICT FILTER: ProcessDirect ONLY (Exclude RFC, HTTP, SOAP, Mail, SFTP)
-          const isStrictProcessDirect = componentType.toLowerCase() === "processdirect" || mfName.toLowerCase().includes("processdirect");
-          if (isStrictProcessDirect && address) {
-            const chan = { id: mfId, name: mfName, componentType: "ProcessDirect", address: address };
+          const isStrictProcessDirect =
+            componentType.toLowerCase() === "processdirect" ||
+            mfName.toLowerCase().includes("processdirect") ||
+            cmdVariantUri.toLowerCase().includes("processdirect");
 
-            let isSender = false;
-            if (direction.includes("SENDER") || direction.includes("INBOUND")) {
-              isSender = true;
-            } else if (cmdVariantUri.includes("/sender/") || cmdVariantUri.includes("::sender")) {
-              isSender = true;
-            } else if (targetRef.includes("startevent") || targetRef.includes("start_") || (sourceRef.includes("participant") && !targetRef.includes("participant"))) {
-              isSender = true;
-            }
+          let isSender = false;
+          if (direction.includes("SENDER") || direction.includes("INBOUND")) {
+            isSender = true;
+          } else if (cmdVariantUri.includes("/sender/") || cmdVariantUri.includes("::sender")) {
+            isSender = true;
+          } else if (targetRef.toLowerCase().includes("startevent") || targetRef.toLowerCase().includes("start_") || (sourceRef.toLowerCase().includes("participant") && !targetRef.toLowerCase().includes("participant"))) {
+            isSender = true;
+          }
+
+          console.log(`  [MF ${i}] id="${mfId}", name="${mfName}", componentType="${componentType}", address="${address}" (raw="${rawAddress}"), isSender=${isSender}, sourceRef="${sourceRef}", targetRef="${targetRef}", isProcessDirect=${isStrictProcessDirect}`);
+
+          if (isStrictProcessDirect && address) {
+            const chan = {
+              id: mfId,
+              name: mfName,
+              componentType: "ProcessDirect",
+              address: address,
+              rawAddress: rawAddress,
+              sourceRef: mf.getAttribute("sourceRef") || "",
+              targetRef: mf.getAttribute("targetRef") || "",
+            };
 
             if (isSender) {
               inbound.push(chan);
@@ -402,6 +421,66 @@ const CmdBpmnModelHelper = {
             }
           }
         }
+
+        // Also inspect embedded activity/event shapes for ProcessDirect adapter configurations
+        const taskTags = ["serviceTask", "sendTask", "callActivity", "endEvent", "intermediateThrowEvent", "startEvent"];
+        taskTags.forEach((tagName) => {
+          const taskEls = xmlDoc.getElementsByTagNameNS("*", tagName);
+          for (let i = 0; i < taskEls.length; i++) {
+            const task = taskEls[i];
+            const taskId = task.getAttribute("id") || "";
+            const taskName = task.getAttribute("name") || taskId;
+
+            const props = task.getElementsByTagNameNS("*", "property");
+            if (props.length === 0) continue;
+
+            let componentType = "";
+            let address = "";
+            let direction = "";
+            let cmdVariantUri = "";
+
+            for (let pIdx = 0; pIdx < props.length; pIdx++) {
+              const p = props[pIdx];
+              const keyEl = p.getElementsByTagNameNS("*", "key")[0] || p.querySelector("key");
+              const valEl = p.getElementsByTagNameNS("*", "value")[0] || p.querySelector("value");
+              const k = keyEl ? keyEl.textContent.trim() : (p.getAttribute("key") || p.getAttribute("name") || "").trim();
+              const v = valEl ? valEl.textContent.trim() : (p.getAttribute("value") || "").trim();
+              if (k.toLowerCase() === "componenttype" || k.toLowerCase() === "adaptertype") componentType = v;
+              if (k.toLowerCase() === "address" || k.toLowerCase() === "url") address = v;
+              if (k.toLowerCase() === "direction") direction = v.toUpperCase();
+              if (k.toLowerCase() === "cmdvarianturi" || k.toLowerCase() === "cmdvariant") cmdVariantUri = v.toLowerCase();
+            }
+
+            const rawAddress = address;
+            const paramMatch = address.match(/^\{\{\s*([a-zA-Z0-9_.\-]+)\s*\}\}$/);
+            if (paramMatch && paramMap[paramMatch[1]]) {
+              address = paramMap[paramMatch[1]];
+            }
+
+            const isProcessDirect =
+              componentType.toLowerCase() === "processdirect" ||
+              taskName.toLowerCase().includes("processdirect") ||
+              cmdVariantUri.toLowerCase().includes("processdirect");
+            if (isProcessDirect && address) {
+              const isSender = direction.includes("SENDER") || direction.includes("INBOUND") || tagName === "startEvent";
+              const chan = {
+                id: taskId,
+                name: taskName,
+                componentType: "ProcessDirect",
+                address: address,
+                rawAddress: rawAddress,
+                sourceRef: taskId,
+                targetRef: "",
+              };
+
+              const targetList = isSender ? inbound : outbound;
+              if (!targetList.some((c) => c.id === taskId || (c.address === address && c.rawAddress === rawAddress))) {
+                targetList.push(chan);
+                console.log(`  [Embedded Task] Found ProcessDirect on <${tagName}> id="${taskId}", address="${address}" (raw="${rawAddress}", isSender=${isSender})`);
+              }
+            }
+          }
+        });
       } catch (eXml) {
         console.warn(`Error parsing BPMN XML for ${iflowId}:`, eXml);
       }

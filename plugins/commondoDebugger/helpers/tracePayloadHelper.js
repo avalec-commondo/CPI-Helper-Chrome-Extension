@@ -65,6 +65,7 @@ const CmdTracePayloadHelper = {
 
     const properties = {};
     const headers = {};
+    const executedStepIds = new Set();
 
     const urlExt = typeof cpiData !== "undefined" && cpiData.urlExtension ? cpiData.urlExtension : "";
     const runtimeExt = typeof cpiData !== "undefined" && cpiData.runtimePathExtension ? cpiData.runtimePathExtension : "";
@@ -153,6 +154,16 @@ const CmdTracePayloadHelper = {
       // Execute step inspections in parallel
       await Promise.all(stepInspectTasks);
 
+      // Collect all executed step IDs from RunSteps
+      allRunSteps.forEach((steps) => {
+        (Array.isArray(steps) ? steps : []).forEach((step) => {
+          if (step.StepId) executedStepIds.add(step.StepId);
+          if (step.ModelStepId) executedStepIds.add(step.ModelStepId);
+          if (step.ActivityId) executedStepIds.add(step.ActivityId);
+          if (step.BranchId) executedStepIds.add(step.BranchId);
+        });
+      });
+
       // 3. Fetch ExchangeProperties and Properties for all Trace IDs in parallel
       const traceIdArray = Array.from(collectedTraceIds);
       if (traceIdArray.length > 0) {
@@ -200,9 +211,10 @@ const CmdTracePayloadHelper = {
       console.warn("Failed fetching trace headers/properties for", messageGuid, e);
     }
 
-    console.log(`%c[Trace Payload Extraction] MessageGuid "${messageGuid}" -> Properties: ${Object.keys(properties).length}, Headers: ${Object.keys(headers).length}`, "color: #3b82f6; font-weight: bold;", { properties, headers });
+    const executedStepsList = Array.from(executedStepIds || []);
+    console.log(`%c[Trace Payload Extraction] MessageGuid "${messageGuid}" -> Properties: ${Object.keys(properties).length}, Headers: ${Object.keys(headers).length}, ExecutedSteps: ${executedStepsList.length}`, "color: #3b82f6; font-weight: bold;", { properties, headers, executedSteps: executedStepsList });
 
-    const result = { properties, headers };
+    const result = { properties, headers, executedStepIds: executedStepsList };
     tracePayloadCache.set(messageGuid, result);
     return result;
   },
