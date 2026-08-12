@@ -29,46 +29,113 @@ const CmdTopologyGraph = {
     const payloadHelper = typeof CmdTracePayloadHelper !== "undefined" ? CmdTracePayloadHelper : {};
     const escapeHtml = payloadHelper.escapeHtml || ((s) => s || "");
 
-    // 1. Group nodes into tiers/rows by hierarchical level
-    const levelNodesMap = {};
-    nodes.forEach((node) => {
-      const lvl = node.level !== undefined ? node.level : 0;
-      if (!levelNodesMap[lvl]) levelNodesMap[lvl] = [];
-      levelNodesMap[lvl].push(node);
-    });
-
-    const levelKeys = Object.keys(levelNodesMap)
-      .map(Number)
-      .sort((a, b) => a - b);
-    if (levelKeys.length === 0) levelKeys.push(0);
-
     const nodeWidth = 260;
     const nodeHeight = 74;
-    const nodeSpacingX = 520;
-    const levelSpacingY = 160;
-    const paddingX = 60;
-    const paddingY = 40;
-
-    const maxNodesInAnyLevel = Math.max(...levelKeys.map((k) => levelNodesMap[k].length), 1);
-    const maxRowWidth = (maxNodesInAnyLevel - 1) * nodeSpacingX + nodeWidth;
-
     const posMap = {};
+    const edgeRoutes = [];
 
-    // 2. Position nodes (Centered top-to-bottom tree layout)
-    levelKeys.forEach((lvl) => {
-      const nodesAtLevel = levelNodesMap[lvl];
-      const count = nodesAtLevel.length;
-      const rowWidth = (count - 1) * nodeSpacingX + nodeWidth;
-      const rowStartX = paddingX + Math.max(0, (maxRowWidth - rowWidth) / 2);
+    // Check if Dagre layout engine is available
+    const dagreLib = (typeof dagre !== "undefined" && dagre.graphlib) ? dagre : (typeof window !== "undefined" && window.dagre ? window.dagre : null);
 
-      nodesAtLevel.forEach((node, idx) => {
-        posMap[node.id] = {
-          x: rowStartX + idx * nodeSpacingX,
-          y: paddingY + lvl * levelSpacingY,
-          node: node,
-        };
+    if (dagreLib) {
+      const gLayout = new dagreLib.graphlib.Graph({ multigraph: true });
+      gLayout.setGraph({
+        rankdir: "TB",
+        nodesep: 80,       // Horizontal space between sibling cards on the same rank
+        ranksep: 110,      // Vertical space between ranks
+        marginx: 50,
+        marginy: 40,
       });
-    });
+      gLayout.setDefaultEdgeLabel(() => ({}));
+
+      nodes.forEach((n) => {
+        gLayout.setNode(n.id, { width: nodeWidth, height: nodeHeight, node: n });
+      });
+
+      edges.forEach((e, idx) => {
+        gLayout.setEdge(e.from, e.to, { address: e.address, edgeData: e }, `edge_${idx}`);
+      });
+
+      dagreLib.layout(gLayout);
+
+      // Collect node positions (Dagre node.x and node.y represent the center of the node)
+      nodes.forEach((n) => {
+        const dNode = gLayout.node(n.id);
+        if (dNode) {
+          posMap[n.id] = {
+            x: dNode.x - nodeWidth / 2,
+            y: dNode.y - nodeHeight / 2,
+            node: n,
+          };
+        }
+      });
+
+      // Collect edge waypoint routes
+      edges.forEach((e, idx) => {
+        const dEdge = gLayout.edge(e.from, e.to, `edge_${idx}`);
+        if (dEdge && dEdge.points) {
+          const midIdx = Math.floor(dEdge.points.length / 2);
+          const midPoint = dEdge.points[midIdx] || dEdge.points[0];
+          edgeRoutes.push({
+            edge: e,
+            points: dEdge.points,
+            labelX: dEdge.x !== undefined ? dEdge.x : midPoint.x,
+            labelY: dEdge.y !== undefined ? dEdge.y : midPoint.y,
+          });
+        }
+      });
+    } else {
+      // Fallback manual layout if Dagre is unavailable
+      const nodeSpacingX = 380;
+      const levelSpacingY = 160;
+      const paddingX = 60;
+      const paddingY = 40;
+
+      const levelNodesMap = {};
+      nodes.forEach((node) => {
+        const lvl = node.level !== undefined ? node.level : 0;
+        if (!levelNodesMap[lvl]) levelNodesMap[lvl] = [];
+        levelNodesMap[lvl].push(node);
+      });
+
+      const levelKeys = Object.keys(levelNodesMap).map(Number).sort((a, b) => a - b);
+      const maxNodesInAnyLevel = Math.max(...levelKeys.map((k) => levelNodesMap[k].length), 1);
+      const maxRowWidth = (maxNodesInAnyLevel - 1) * nodeSpacingX + nodeWidth;
+
+      levelKeys.forEach((lvl) => {
+        const nodesAtLevel = levelNodesMap[lvl];
+        const count = nodesAtLevel.length;
+        const rowWidth = (count - 1) * nodeSpacingX + nodeWidth;
+        const rowStartX = paddingX + Math.max(0, (maxRowWidth - rowWidth) / 2);
+
+        nodesAtLevel.forEach((node, idx) => {
+          posMap[node.id] = {
+            x: rowStartX + idx * nodeSpacingX,
+            y: paddingY + lvl * levelSpacingY,
+            node: node,
+          };
+        });
+      });
+
+      edges.forEach((e) => {
+        const fromPos = posMap[e.from];
+        const toPos = posMap[e.to];
+        if (fromPos && toPos) {
+          const x1 = fromPos.x + nodeWidth / 2;
+          const y1 = fromPos.y + nodeHeight;
+          const x2 = toPos.x + nodeWidth / 2;
+          const y2 = toPos.y;
+          const midY = (y1 + y2) / 2;
+          const midX = (x1 + x2) / 2;
+          edgeRoutes.push({
+            edge: e,
+            points: [{ x: x1, y: y1 }, { x: x1, y: midY }, { x: x2, y: midY }, { x: x2, y: y2 }],
+            labelX: midX,
+            labelY: midY,
+          });
+        }
+      });
+    }
 
     // Outer Map Wrapper
     const mapWrapper = document.createElement("div");
@@ -165,50 +232,60 @@ const CmdTopologyGraph = {
       setTransform();
     };
 
+    // Helper to generate smooth SVG path from Dagre points
+    function pointsToSmoothPath(points) {
+      if (!points || points.length < 2) return "";
+      if (points.length === 2) {
+        return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+      }
+      if (points.length === 3) {
+        return `M ${points[0].x} ${points[0].y} Q ${points[1].x} ${points[1].y}, ${points[2].x} ${points[2].y}`;
+      }
+      if (points.length === 4) {
+        return `M ${points[0].x} ${points[0].y} C ${points[1].x} ${points[1].y}, ${points[2].x} ${points[2].y}, ${points[3].x} ${points[3].y}`;
+      }
+      let d = `M ${points[0].x} ${points[0].y}`;
+      for (let i = 1; i < points.length; i++) {
+        d += ` L ${points[i].x} ${points[i].y}`;
+      }
+      return d;
+    }
+
     // 3. Draw Connecting Directional Curves (Top to Bottom) with ProcessDirect Endpoint Labels
-    edges.forEach((edge) => {
-      const fromPos = posMap[edge.from];
-      const toPos = posMap[edge.to];
-      if (fromPos && toPos) {
-        // Start from bottom-center of parent node
-        const x1 = fromPos.x + nodeWidth / 2;
-        const y1 = fromPos.y + nodeHeight;
+    edgeRoutes.forEach((route) => {
+      const edge = route.edge;
+      const points = route.points;
+      if (!points || points.length === 0) return;
 
-        // End at top-center of child node
-        const x2 = toPos.x + nodeWidth / 2;
-        const y2 = toPos.y;
+      const pathData = pointsToSmoothPath(points);
+      const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      path.setAttribute("d", pathData);
+      path.setAttribute("fill", "none");
+      path.setAttribute("stroke", "#0284c7");
+      path.setAttribute("stroke-width", "2.2");
+      path.setAttribute("marker-end", "url(#cmd-arrow-down)");
+      g.appendChild(path);
 
-        const midY = (y1 + y2) / 2;
-        const midX = (x1 + x2) / 2;
+      // ProcessDirect Endpoint Label Pill
+      if (edge.address) {
+        let labelText = edge.address;
+        if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
 
-        // Smooth vertical descending Bézier curve
-        const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
-        path.setAttribute("d", `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`);
-        path.setAttribute("fill", "none");
-        path.setAttribute("stroke", "#0284c7");
-        path.setAttribute("stroke-width", "2.2");
-        path.setAttribute("marker-end", "url(#cmd-arrow-down)");
-        g.appendChild(path);
+        const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        const pillWidth = Math.max(70, labelText.length * 6.8 + 18);
+        const pillHeight = 22;
+        const midX = route.labelX;
+        const midY = route.labelY;
 
-        // ProcessDirect Endpoint Label Pill
-        if (edge.address) {
-          let labelText = edge.address;
-          if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
-
-          const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-          const pillWidth = Math.max(70, labelText.length * 6.8 + 18);
-          const pillHeight = 22;
-
-          edgeG.innerHTML = `
-            <title>${escapeHtml(edge.address)}</title>
-            <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
-                  fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
-            <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
-              ${escapeHtml(labelText)}
-            </text>
-          `;
-          g.appendChild(edgeG);
-        }
+        edgeG.innerHTML = `
+          <title>${escapeHtml(edge.address)}</title>
+          <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
+                fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
+          <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
+            ${escapeHtml(labelText)}
+          </text>
+        `;
+        g.appendChild(edgeG);
       }
     });
 

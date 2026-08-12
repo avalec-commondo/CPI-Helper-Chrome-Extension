@@ -50,6 +50,7 @@
         "/lib/semanticui/tablesort.js",
         "/lib/markdownit/markdown-it.min.js",
         "/lib/pako/pako_deflate.min.js",
+        "/lib/dagre/dagre.min.js",
         "/scripts/init.js",
         "/common/logging.js",
         "/common/tools.js",
