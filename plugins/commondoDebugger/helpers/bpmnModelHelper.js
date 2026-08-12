@@ -348,6 +348,7 @@ const CmdBpmnModelHelper = {
           const name = el.getAttribute("name");
           if (id && name && name.trim() && name !== id) {
             steps[id] = name.trim();
+            steps[id.toLowerCase()] = name.trim();
           }
         }
 
@@ -359,6 +360,10 @@ const CmdBpmnModelHelper = {
           const mf = messageFlows[i];
           const mfId = mf.getAttribute("id") || "";
           const mfName = mf.getAttribute("name") || mfId;
+          if (mfId && mfName && mfName !== mfId) {
+            steps[mfId] = mfName.trim();
+            steps[mfId.toLowerCase()] = mfName.trim();
+          }
 
           const props = mf.getElementsByTagNameNS("*", "property");
           const sourceRef = (mf.getAttribute("sourceRef") || "").toLowerCase();

@@ -58,6 +58,13 @@ const CmdStepInspector = {
     }
 
     const iFlowId = logEntry.IntegrationArtifact?.Id || logEntry.IntegrationFlowName || "iFlow";
+    let stepNameMap = {};
+    if (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.fetchIFlowBpmnModel) {
+      try {
+        const bpmnModel = await CmdBpmnModelHelper.fetchIFlowBpmnModel(iFlowId);
+        stepNameMap = bpmnModel?.steps || {};
+      } catch (eB) {}
+    }
 
     const wrapper = document.createElement("div");
     wrapper.style.cssText = "height: 100%; display: flex; flex-direction: column; min-height: 0;";
@@ -77,7 +84,20 @@ const CmdStepInspector = {
     const stepsListDiv = container.querySelector("#cmd-steps-list-container");
 
     steps.forEach((step, idx) => {
-      const stepName = step.StepId || step.ModelStepId || `Step_${idx + 1}`;
+      const rawStepId = step.StepId || step.ModelStepId || `Step_${idx + 1}`;
+      const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
+      const humanName = stepNameMap[baseShapeId] || stepNameMap[baseShapeId.toLowerCase()] || stepNameMap[rawStepId];
+
+      const displayName = humanName || baseShapeId || rawStepId;
+      const techParts = [];
+      if (baseShapeId && baseShapeId !== displayName) {
+        techParts.push(baseShapeId);
+      }
+      if (step.Activity && step.Activity.toLowerCase() !== displayName.toLowerCase()) {
+        techParts.push(step.Activity);
+      }
+      const techInfo = techParts.join(" · ");
+
       const childCount = step.ChildCount || idx + 1;
       const duration = step.StepStart && step.StepStop ? Math.max(0, parseMs(step.StepStop) - parseMs(step.StepStart)) : step.Duration || 0;
       const status = step.Status || "COMPLETED";
@@ -86,15 +106,15 @@ const CmdStepInspector = {
       stepCard.style.cssText = "border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.04);";
 
       stepCard.innerHTML = `
-        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem;">
-          <div style="font-weight: 600; color: #1e293b;">
-            <span style="color: #64748b; margin-right: 6px;">#${idx + 1}</span>
-            ${escapeHtml(stepName)}
-            <span style="font-weight: normal; font-size: 0.75rem; color: #64748b; margin-left: 4px;">(${escapeHtml(step.Activity || "")})</span>
+        <div style="display: flex; justify-content: space-between; align-items: baseline; font-size: 0.85rem; gap: 8px;">
+          <div style="display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; flex: 1; min-width: 0;">
+            <span style="color: #64748b; font-size: 0.8rem; font-weight: normal; flex-shrink: 0;">#${idx + 1}</span>
+            <span style="font-weight: 600; color: #0f172a; font-size: 0.88rem; word-break: break-word;">${escapeHtml(displayName)}</span>
+            ${techInfo ? `<span style="font-size: 0.72rem; color: #64748b; font-weight: normal; font-family: monospace;">(${escapeHtml(techInfo)})</span>` : ""}
           </div>
-          <div style="font-size: 0.75rem; color: #64748b;">
+          <div style="font-size: 0.75rem; color: #64748b; flex-shrink: 0; display: flex; align-items: center; gap: 6px;">
             <span class="ui mini label ${status === "COMPLETED" ? "green" : "red"}" style="padding: 2px 6px;">${escapeHtml(status)}</span>
-            <span style="margin-left: 6px;">${duration}ms</span>
+            <span>${duration}ms</span>
           </div>
         </div>
 
