@@ -391,8 +391,8 @@ const CmdDebuggerModal = {
         this.state.topologyData,
         this.state.logsByFlowId,
         this.state.selectedNodeId,
-        (nodeId, logsForNode) => {
-          this.selectNodeAndInspect(nodeId, logsForNode);
+        (nodeId, logsForNode, meta) => {
+          this.selectNodeAndInspect(nodeId, logsForNode, meta);
         }
       );
     }
@@ -405,7 +405,7 @@ const CmdDebuggerModal = {
   /**
    * Handles node selection from the directional graph and sets up the per-node instance dropdown.
    */
-  selectNodeAndInspect(nodeId, logsForNode = []) {
+  selectNodeAndInspect(nodeId, logsForNode = [], meta = {}) {
     this.state.selectedNodeId = nodeId;
     this.state.selectedNodeRunIndex = 0;
 
@@ -415,12 +415,19 @@ const CmdDebuggerModal = {
     const inspectorContainer = document.querySelector("#cmd-step-inspector-container");
 
     if (titleEl) {
-      const isRoot = this.state.topologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
-      titleEl.innerHTML = `
-        <span style="color: ${isRoot ? "#0284c7" : "#334155"};">${nodeId}</span>
-        <span class="ui mini label" style="margin-left: 6px; font-weight: normal;">${isRoot ? "ROOT FLOW" : "CHILD FLOW"}</span>
-        <span style="font-size: 0.8rem; font-weight: normal; color: #64748b; margin-left: 8px;">(${logsForNode.length} run ${logsForNode.length === 1 ? "instance" : "instances"} found)</span>
-      `;
+      if (meta.isHanging) {
+        titleEl.innerHTML = `
+          <span style="color: #b45309; font-family: monospace;">${meta.rawAddress || meta.address}</span>
+          <span class="ui mini yellow label" style="margin-left: 6px; font-weight: normal;">UNRESOLVED OUTBOUND</span>
+        `;
+      } else {
+        const isRoot = this.state.topologyData?.nodes?.find((n) => n.id === nodeId)?.level === 0;
+        titleEl.innerHTML = `
+          <span style="color: ${isRoot ? "#0284c7" : "#334155"};">${nodeId}</span>
+          <span class="ui mini label" style="margin-left: 6px; font-weight: normal;">${isRoot ? "ROOT FLOW" : "CHILD FLOW"}</span>
+          <span style="font-size: 0.8rem; font-weight: normal; color: #64748b; margin-left: 8px;">(${logsForNode.length} run ${logsForNode.length === 1 ? "instance" : "instances"} found)</span>
+        `;
+      }
     }
 
     // Per-node run instance dropdown (especially useful for Iterators/Splitters)
@@ -455,7 +462,18 @@ const CmdDebuggerModal = {
 
     // Inspect the selected run instance
     if (inspectorContainer) {
-      if (logsForNode.length > 0) {
+      if (meta.isHanging) {
+        inspectorContainer.innerHTML = `
+          <div style="padding: 30px 20px; background: #fffdf5; border: 1px dashed #f59e0b; border-radius: 6px; text-align: center; color: #92400e; margin-top: 20px;">
+            <i class="external alternate icon" style="font-size: 1.5rem; color: #f59e0b; margin-bottom: 8px;"></i>
+            <div style="font-weight: 600; font-size: 0.95rem;">Unresolved Outbound Channel</div>
+            <div style="font-family: monospace; font-size: 1.05rem; font-weight: bold; margin-top: 6px; color: #b45309;">${meta.rawAddress || meta.address}</div>
+            <div style="font-size: 0.82rem; margin-top: 8px; color: #78350f; max-width: 380px; margin-left: auto; margin-right: auto; line-height: 1.5;">
+              This ProcessDirect channel was defined in the BPMN model of <b>${meta.callerId}</b>, but no matching child iFlow was traversed or deployed during this correlation run.
+            </div>
+          </div>
+        `;
+      } else if (logsForNode.length > 0) {
         const activeLog = logsForNode[this.state.selectedNodeRunIndex] || logsForNode[0];
         if (typeof CmdStepInspector !== "undefined") {
           CmdStepInspector.inspectStepDetails(inspectorContainer, activeLog);

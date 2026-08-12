@@ -18,10 +18,10 @@ const CmdTopologyGraph = {
     if (!container) return;
     container.innerHTML = "";
 
-    const nodes = topologyData?.nodes || [];
-    const edges = topologyData?.edges || [];
+    const regularNodes = topologyData?.nodes || [];
+    const regularEdges = topologyData?.edges || [];
 
-    if (nodes.length === 0) {
+    if (regularNodes.length === 0) {
       container.innerHTML = `<div style="text-align: center; color: #888; margin-top: 150px; font-size: 0.95rem;">No topology nodes discovered.</div>`;
       return;
     }
@@ -31,8 +31,42 @@ const CmdTopologyGraph = {
 
     const nodeWidth = 260;
     const nodeHeight = 74;
+    const hangingWidth = 165;
+    const hangingHeight = 28;
     const posMap = {};
     const edgeRoutes = [];
+
+    // Construct full graph elements including hanging nodes
+    const allNodes = [...regularNodes];
+    const allEdges = [...regularEdges];
+
+    regularNodes.forEach((n) => {
+      const hangings = n.hangingOutbounds || [];
+      hangings.forEach((h, hIdx) => {
+        const rawAddr = (h.address || h.rawAddress || `outbound_${hIdx}`).trim();
+        const cleanId = rawAddr.replace(/[^a-zA-Z0-9_]/g, "_");
+        const hangingId = `hanging__${n.id}__${hIdx}__${cleanId}`;
+
+        const hangingNode = {
+          id: hangingId,
+          isHanging: true,
+          callerId: n.id,
+          address: h.address || rawAddr,
+          rawAddress: h.rawAddress || rawAddr,
+          level: (n.level !== undefined ? n.level : 0) + 1,
+        };
+        allNodes.push(hangingNode);
+
+        allEdges.push({
+          from: n.id,
+          to: hangingId,
+          address: h.address || rawAddr,
+          rawAddress: h.rawAddress || rawAddr,
+          isHangingEdge: true,
+          matchType: "Unresolved Outbound",
+        });
+      });
+    });
 
     // Check if Dagre layout engine is available
     const dagreLib = (typeof dagre !== "undefined" && dagre.graphlib) ? dagre : (typeof window !== "undefined" && window.dagre ? window.dagre : null);
@@ -41,37 +75,43 @@ const CmdTopologyGraph = {
       const gLayout = new dagreLib.graphlib.Graph({ multigraph: true });
       gLayout.setGraph({
         rankdir: "TB",
-        nodesep: 80,       // Horizontal space between sibling cards on the same rank
-        ranksep: 110,      // Vertical space between ranks
-        marginx: 50,
-        marginy: 40,
+        nodesep: 60,       // Horizontal space between sibling cards on the same rank
+        ranksep: 80,       // Vertical space between ranks
+        marginx: 40,
+        marginy: 30,
       });
       gLayout.setDefaultEdgeLabel(() => ({}));
 
-      nodes.forEach((n) => {
-        gLayout.setNode(n.id, { width: nodeWidth, height: nodeHeight, node: n });
+      allNodes.forEach((n) => {
+        const w = n.isHanging ? hangingWidth : nodeWidth;
+        const h = n.isHanging ? hangingHeight : nodeHeight;
+        gLayout.setNode(n.id, { width: w, height: h, node: n });
       });
 
-      edges.forEach((e, idx) => {
+      allEdges.forEach((e, idx) => {
         gLayout.setEdge(e.from, e.to, { address: e.address, edgeData: e }, `edge_${idx}`);
       });
 
       dagreLib.layout(gLayout);
 
       // Collect node positions (Dagre node.x and node.y represent the center of the node)
-      nodes.forEach((n) => {
+      allNodes.forEach((n) => {
         const dNode = gLayout.node(n.id);
+        const w = n.isHanging ? hangingWidth : nodeWidth;
+        const h = n.isHanging ? hangingHeight : nodeHeight;
         if (dNode) {
           posMap[n.id] = {
-            x: dNode.x - nodeWidth / 2,
-            y: dNode.y - nodeHeight / 2,
+            x: dNode.x - w / 2,
+            y: dNode.y - h / 2,
+            width: w,
+            height: h,
             node: n,
           };
         }
       });
 
       // Collect edge waypoint routes
-      edges.forEach((e, idx) => {
+      allEdges.forEach((e, idx) => {
         const dEdge = gLayout.edge(e.from, e.to, `edge_${idx}`);
         if (dEdge && dEdge.points) {
           const midIdx = Math.floor(dEdge.points.length / 2);
@@ -86,13 +126,13 @@ const CmdTopologyGraph = {
       });
     } else {
       // Fallback manual layout if Dagre is unavailable
-      const nodeSpacingX = 380;
-      const levelSpacingY = 160;
-      const paddingX = 60;
-      const paddingY = 40;
+      const nodeSpacingX = 320;
+      const levelSpacingY = 130;
+      const paddingX = 50;
+      const paddingY = 30;
 
       const levelNodesMap = {};
-      nodes.forEach((node) => {
+      allNodes.forEach((node) => {
         const lvl = node.level !== undefined ? node.level : 0;
         if (!levelNodesMap[lvl]) levelNodesMap[lvl] = [];
         levelNodesMap[lvl].push(node);
@@ -109,21 +149,25 @@ const CmdTopologyGraph = {
         const rowStartX = paddingX + Math.max(0, (maxRowWidth - rowWidth) / 2);
 
         nodesAtLevel.forEach((node, idx) => {
+          const w = node.isHanging ? hangingWidth : nodeWidth;
+          const h = node.isHanging ? hangingHeight : nodeHeight;
           posMap[node.id] = {
             x: rowStartX + idx * nodeSpacingX,
             y: paddingY + lvl * levelSpacingY,
+            width: w,
+            height: h,
             node: node,
           };
         });
       });
 
-      edges.forEach((e) => {
+      allEdges.forEach((e) => {
         const fromPos = posMap[e.from];
         const toPos = posMap[e.to];
         if (fromPos && toPos) {
-          const x1 = fromPos.x + nodeWidth / 2;
-          const y1 = fromPos.y + nodeHeight;
-          const x2 = toPos.x + nodeWidth / 2;
+          const x1 = fromPos.x + fromPos.width / 2;
+          const y1 = fromPos.y + fromPos.height;
+          const x2 = toPos.x + toPos.width / 2;
           const y2 = toPos.y;
           const midY = (y1 + y2) / 2;
           const midX = (x1 + x2) / 2;
@@ -162,6 +206,9 @@ const CmdTopologyGraph = {
     defs.innerHTML = `
       <marker id="cmd-arrow-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#0284c7"/>
+      </marker>
+      <marker id="cmd-arrow-hanging" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/>
       </marker>
     `;
     svg.appendChild(defs);
@@ -257,17 +304,24 @@ const CmdTopologyGraph = {
       const points = route.points;
       if (!points || points.length === 0) return;
 
+      const isHangingEdge = Boolean(edge.isHangingEdge);
+      const strokeColor = isHangingEdge ? "#f59e0b" : "#0284c7";
+      const strokeWidth = isHangingEdge ? "1.4" : "2.2";
+      const strokeDash = isHangingEdge ? "3,3" : "none";
+      const markerEnd = isHangingEdge ? "url(#cmd-arrow-hanging)" : "url(#cmd-arrow-down)";
+
       const pathData = pointsToSmoothPath(points);
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
       path.setAttribute("d", pathData);
       path.setAttribute("fill", "none");
-      path.setAttribute("stroke", "#0284c7");
-      path.setAttribute("stroke-width", "2.2");
-      path.setAttribute("marker-end", "url(#cmd-arrow-down)");
+      path.setAttribute("stroke", strokeColor);
+      path.setAttribute("stroke-width", strokeWidth);
+      path.setAttribute("stroke-dasharray", strokeDash);
+      path.setAttribute("marker-end", markerEnd);
       g.appendChild(path);
 
-      // ProcessDirect Endpoint Label Pill
-      if (edge.address) {
+      // ProcessDirect Endpoint Label Pill (Only for regular inter-flow edges, since hanging node itself displays the endpoint)
+      if (edge.address && !isHangingEdge) {
         let labelText = edge.address;
         if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
 
@@ -278,7 +332,7 @@ const CmdTopologyGraph = {
         const midY = route.labelY;
 
         edgeG.innerHTML = `
-          <title>${escapeHtml(edge.address)}</title>
+          <title>${escapeHtml(edge.rawAddress || edge.address)} (${escapeHtml(edge.matchType || "ProcessDirect")})</title>
           <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
                 fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
           <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
@@ -293,89 +347,96 @@ const CmdTopologyGraph = {
     Object.values(posMap).forEach((pos) => {
       const node = pos.node;
       const flowId = node.id;
-      const logs = logsByFlowId[flowId] || [];
-      const hasRuns = logs.length > 0;
-      const latestLog = hasRuns ? logs[0] : null;
-      const isSelected = selectedNodeId && selectedNodeId === flowId;
-      const isRoot = node.level === 0;
-
-      // Status determination
-      let status = hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
-      let statusColor = "#94a3b8"; // Gray for no runs / unexecuted
-      if (hasRuns) {
-        if (status === "COMPLETED") statusColor = "#10b981";
-        else if (status === "FAILED") statusColor = "#ef4444";
-        else if (status === "PROCESSING") statusColor = "#3b82f6";
-        else if (status.match(/^(RETRY|ESCALATED|CANCELLED|DISCARDED)$/)) statusColor = "#f59e0b";
-      }
-
-      let rawName = flowId;
-      if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
-      const displayName = escapeHtml(rawName);
+      const isHanging = Boolean(node.isHanging);
 
       const nodeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
       nodeG.setAttribute("class", "cmd-node-group");
       nodeG.style.cursor = "pointer";
 
-      // Badge pill in top-right: Multi-run, Unexecuted, or Root
-      const rightBadge =
-        !hasRuns
-          ? `<rect x="${pos.x + nodeWidth - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
-             <text x="${pos.x + nodeWidth - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">0 runs</text>`
-          : logs.length > 1
-            ? `<rect x="${pos.x + nodeWidth - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
-               <text x="${pos.x + nodeWidth - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
-            : isRoot
-              ? `<rect x="${pos.x + nodeWidth - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
-                 <text x="${pos.x + nodeWidth - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
-              : "";
+      if (isHanging) {
+        let labelText = node.rawAddress || node.address || "Unresolved";
+        if (labelText.length > 18) labelText = labelText.substring(0, 16) + "..";
 
-      nodeG.innerHTML = `
-        <title>${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
-        <rect x="${pos.x}" y="${pos.y}" width="${nodeWidth}" height="${nodeHeight}" rx="8"
-              fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
-              stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
-              stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
-              stroke-dasharray="${!hasRuns ? "4,3" : "none"}"
-              filter="drop-shadow(0 2px 6px rgba(0,0,0,0.05))" />
-        <rect x="${pos.x}" y="${pos.y}" width="6" height="${nodeHeight}" rx="3" fill="${statusColor}" />
-        <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="${!hasRuns ? "#64748b" : "#1e293b"}">
-          ${displayName}
-        </text>
-        <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
-          Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan> ${hasRuns ? `| Lvl: ${escapeHtml(latestLog.LogLevel || "INFO")}` : ""}
-        </text>
-        ${rightBadge}
-      `;
-
-      // Hanging Dynamic Outbound Channels (e.g. /${property.reportId} with no executed child in correlation)
-      const hangingOutbounds = node.hangingOutbounds || [];
-      hangingOutbounds.forEach((h, hIdx) => {
-        let labelText = h.address || h.rawAddress || "Dynamic Call";
-        if (labelText.length > 26) labelText = labelText.substring(0, 24) + "..";
-        const pillWidth = Math.max(80, labelText.length * 6.8 + 24);
-        const pillHeight = 22;
-        const startX = pos.x + nodeWidth / 2;
-        const startY = pos.y + nodeHeight;
-        const endY = startY + 28 + (hIdx * 26);
-
-        const hangingG = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        hangingG.innerHTML = `
-          <title>Dynamic Outbound Call: ${escapeHtml(h.rawAddress || h.address)} (Target was not executed or not deployed in this run)</title>
-          <line x1="${startX}" y1="${startY}" x2="${startX}" y2="${endY - pillHeight / 2}" stroke="#f59e0b" stroke-width="1.8" stroke-dasharray="4,3"/>
-          <rect x="${startX - pillWidth / 2}" y="${endY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
-                fill="#fffbeb" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="3,2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.08))"/>
-          <text x="${startX}" y="${endY + 4}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">
-            ${escapeHtml(labelText)} ↗
+        nodeG.innerHTML = `
+          <title>Unresolved Outbound: ${escapeHtml(node.rawAddress || node.address)}\nCaller: ${escapeHtml(node.callerId)} (Not executed or unmatched)</title>
+          <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="14"
+                fill="#fffdf5" stroke="#f59e0b" stroke-width="1.1" stroke-dasharray="3,2"
+                filter="drop-shadow(0 1px 2px rgba(245,158,11,0.15))" />
+          <circle cx="${pos.x + 12}" cy="${pos.y + pos.height / 2}" r="3" fill="#f59e0b" />
+          <text x="${pos.x + 20}" y="${pos.y + pos.height / 2 + 3.5}" font-size="9.5px" font-family="monospace, sans-serif" font-weight="bold" fill="#92400e">
+            ${escapeHtml(labelText)}
           </text>
+          <text x="${pos.x + pos.width - 10}" y="${pos.y + pos.height / 2 + 3}" text-anchor="end" font-size="9px" font-weight="bold" fill="#d97706">↗</text>
         `;
-        g.appendChild(hangingG);
-      });
 
-      nodeG.onclick = (e) => {
-        e.stopPropagation();
-        if (onSelectNode) onSelectNode(flowId, logs);
-      };
+        nodeG.onclick = (e) => {
+          e.stopPropagation();
+          if (onSelectNode) {
+            onSelectNode(node.id, [], {
+              isHanging: true,
+              callerId: node.callerId,
+              address: node.address,
+              rawAddress: node.rawAddress,
+            });
+          }
+        };
+      } else {
+        const logs = logsByFlowId[flowId] || [];
+        const hasRuns = logs.length > 0;
+        const latestLog = hasRuns ? logs[0] : null;
+        const isSelected = selectedNodeId && selectedNodeId === flowId;
+        const isRoot = node.level === 0;
+
+        // Status determination
+        let status = hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
+        let statusColor = "#94a3b8"; // Gray for no runs / unexecuted
+        if (hasRuns) {
+          if (status === "COMPLETED") statusColor = "#10b981";
+          else if (status === "FAILED") statusColor = "#ef4444";
+          else if (status === "PROCESSING") statusColor = "#3b82f6";
+          else if (status.match(/^(RETRY|ESCALATED|CANCELLED|DISCARDED)$/)) statusColor = "#f59e0b";
+        }
+
+        let rawName = flowId;
+        if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
+        const displayName = escapeHtml(rawName);
+
+        // Badge pill in top-right: Multi-run, Unexecuted, or Root
+        const rightBadge =
+          !hasRuns
+            ? `<rect x="${pos.x + pos.width - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+               <text x="${pos.x + pos.width - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">0 runs</text>`
+            : logs.length > 1
+              ? `<rect x="${pos.x + pos.width - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
+              : isRoot
+                ? `<rect x="${pos.x + pos.width - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
+                   <text x="${pos.x + pos.width - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
+                : "";
+
+        nodeG.innerHTML = `
+          <title>${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
+          <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
+                fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
+                stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
+                stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
+                stroke-dasharray="${!hasRuns ? "4,3" : "none"}"
+                filter="drop-shadow(0 2px 6px rgba(0,0,0,0.05))" />
+          <rect x="${pos.x}" y="${pos.y}" width="6" height="${pos.height}" rx="3" fill="${statusColor}" />
+          <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="${!hasRuns ? "#64748b" : "#1e293b"}">
+            ${displayName}
+          </text>
+          <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
+            Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan> ${hasRuns ? `| Lvl: ${escapeHtml(latestLog.LogLevel || "INFO")}` : ""}
+          </text>
+          ${rightBadge}
+        `;
+
+        nodeG.onclick = (e) => {
+          e.stopPropagation();
+          if (onSelectNode) onSelectNode(flowId, logs);
+        };
+      }
 
       g.appendChild(nodeG);
     });
