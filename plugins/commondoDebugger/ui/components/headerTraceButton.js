@@ -1,15 +1,46 @@
 // ===========================================================================
-// COMMODNO IS DEBUGGER - HEADER TRACE BUTTON FEATURE
+// COMMNDO IS DEBUGGER - HEADER TRACE BUTTON COMPONENT (CmdHeaderTraceButton)
 // ===========================================================================
-// Injects the UI5 header 'Trace IFlows' action button into SAP CPI's navigation bar,
-// auto-activates TRACE for root + ProcessDirect children, provides live countdown
-// badge display, and triggers informational toasts.
+// Injects the UI5 header 'Trace IFlows' action button and live 10-minute
+// countdown badge into SAP CPI's top navigation bar only when Commondo Debugger is active.
 
 const CmdHeaderTraceButton = {
   timerInterval: null,
 
   /**
-   * Updates or starts the live 10-minute countdown badge next to the header button.
+   * Checks whether the commondoDebugger plugin is active in CPI Helper settings.
+   */
+  async isPluginActive() {
+    try {
+      if (typeof getPluginSettings === "function") {
+        const s = await getPluginSettings("commondoDebugger");
+        if (s && s["commondoDebugger---isActive"] !== undefined) {
+          return s["commondoDebugger---isActive"] === true;
+        }
+      }
+      if (typeof getStorageValue === "function") {
+        const v = await getStorageValue("commondoDebugger", "isActive");
+        if (v !== undefined && v !== null) {
+          return v === true;
+        }
+      }
+      if (typeof chrome !== "undefined" && chrome.storage?.sync) {
+        return new Promise((resolve) => {
+          chrome.storage.sync.get("commondoDebugger---isActive", (items) => {
+            if (items && items["commondoDebugger---isActive"] !== undefined) {
+              resolve(items["commondoDebugger---isActive"] === true);
+            } else {
+              resolve(true);
+            }
+          });
+        });
+      }
+    } catch (e) {}
+    return true;
+  },
+
+  /**
+   * Updates or starts the live 10-minute countdown badge in the UI5 header.
    */
   updateHeaderTraceTimer(activatedAt = Date.now()) {
     const timerBadge = document.getElementById("__commondo_header_trace_timer");
@@ -34,9 +65,9 @@ const CmdHeaderTraceButton = {
         timerText.textContent = formatted;
       } else {
         timerBadge.style.display = "none";
-        if (CmdHeaderTraceButton.timerInterval) {
-          clearInterval(CmdHeaderTraceButton.timerInterval);
-          CmdHeaderTraceButton.timerInterval = null;
+        if (this.timerInterval) {
+          clearInterval(this.timerInterval);
+          this.timerInterval = null;
         }
       }
     };
@@ -46,7 +77,7 @@ const CmdHeaderTraceButton = {
   },
 
   /**
-   * Checks Chrome storage to see if TRACE was recently activated and starts header countdown.
+   * Checks Chrome storage to see if TRACE was recently activated and starts countdown.
    */
   async checkExistingHeaderTraceStatus() {
     try {
@@ -54,14 +85,17 @@ const CmdHeaderTraceButton = {
       const locId = (typeof cpiData !== "undefined" && cpiData.runtimeLocationId) ? cpiData.runtimeLocationId : "cloudintegration";
       if (!rootFlow) return;
 
-      if (typeof storageGetPromise === "function") {
-        const stored = await storageGetPromise(`${rootFlow}_${locId}_powertraceLastRefresh`);
-        if (stored) {
-          const lastTime = Number(stored);
-          const elapsed = Date.now() - lastTime;
-          if (elapsed < 10 * 60 * 1000) {
-            this.updateHeaderTraceTimer(lastTime);
-          }
+      const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
+      if (!utils) return;
+
+      const storageKey = `${rootFlow}_${locId}_powertraceLastRefresh`;
+      const stored = await utils.storageGet(storageKey);
+
+      if (stored) {
+        const lastTime = Number(stored);
+        const elapsed = Date.now() - lastTime;
+        if (elapsed < 10 * 60 * 1000) {
+          this.updateHeaderTraceTimer(lastTime);
         }
       }
     } catch (e) {}
@@ -69,15 +103,23 @@ const CmdHeaderTraceButton = {
 
   /**
    * Injects the Trace IFlows button and live countdown badge into the UI5 header bar.
+   * Only renders if the commondoDebugger plugin is active.
    */
-  injectButton() {
+  async injectButton() {
+    const isActive = await this.isPluginActive();
+    const existing = document.getElementById("__commondo_header_trace_container");
+    if (!isActive) {
+      if (existing) existing.remove();
+      return;
+    }
+
     let area = document.querySelector("[id*='--iflowObjectPageHeader-actions']");
     if (!area) {
       area = document.querySelector(".sapUxAPObjectPageHeaderIdentifierActions");
     }
     if (!area) return;
 
-    if (document.getElementById("__commondo_trace_all_header_btn")) {
+    if (existing) {
       this.checkExistingHeaderTraceStatus();
       return;
     }
@@ -93,7 +135,7 @@ const CmdHeaderTraceButton = {
     timerBadge.id = "__commondo_header_trace_timer";
     timerBadge.title = "TRACE remaining active time (10 min keep-alive)";
     timerBadge.style.cssText = "display: none; align-items: center; gap: 4px; padding: 3px 8px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 4px; color: #065f46; font-family: monospace; font-size: 0.8rem; font-weight: bold; line-height: 1.2;";
-    timerBadge.innerHTML = `<span>⏱</span> <span id="__commondo_header_timer_text">10:00</span>`;
+    timerBadge.innerHTML = `<span style="display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: #10b981;"></span> <span id="__commondo_header_timer_text">10:00</span>`;
 
     const traceBtn = document.createElement("button");
     traceBtn.id = "__commondo_trace_all_header_btn";
@@ -108,11 +150,11 @@ const CmdHeaderTraceButton = {
       </span>
     `;
 
-    traceBtn.onclick = async () => {
-      if (typeof CmdTraceManager !== "undefined" && CmdTraceManager.openTraceManagerModal) {
-        await CmdTraceManager.openTraceManagerModal();
+    traceBtn.onclick = () => {
+      if (typeof CmdTraceManagerModal !== "undefined" && CmdTraceManagerModal.open) {
+        CmdTraceManagerModal.open();
       } else if (typeof window.openTraceManagerModal === "function") {
-        await window.openTraceManagerModal();
+        window.openTraceManagerModal();
       }
     };
 
@@ -131,14 +173,21 @@ const CmdHeaderTraceButton = {
    */
   init() {
     this.injectButton();
-    setInterval(() => this.injectButton(), 2000);
+    setInterval(() => this.injectButton(), 2500);
   },
 };
 
-// Expose to window namespace
+// Expose globally
 if (typeof window !== "undefined") {
   window.CmdHeaderTraceButton = CmdHeaderTraceButton;
 }
+if (typeof global !== "undefined") {
+  global.CmdHeaderTraceButton = CmdHeaderTraceButton;
+}
 
 // Auto-initialize header integration
-CmdHeaderTraceButton.init();
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => CmdHeaderTraceButton.init());
+} else {
+  CmdHeaderTraceButton.init();
+}

@@ -83,7 +83,7 @@
         "/plugins/commondoDebugger/ui/views/topologyGraphView.js",
         "/plugins/commondoDebugger/ui/views/stepInspectorView.js",
         "/plugins/commondoDebugger/ui/views/debuggerMainModal.js",
-        "/plugins/commondoDebugger/features/headerTraceButton.js",
+        "/plugins/commondoDebugger/ui/components/headerTraceButton.js",
         "/plugins/commondoDebugger/commondoDebugger.js",
         "/plugins/commondoDebugger/test/testMasterRunner.js",
         "/plugins/traceModifer.js",
