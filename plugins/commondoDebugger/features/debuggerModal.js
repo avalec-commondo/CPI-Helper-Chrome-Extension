@@ -508,7 +508,8 @@ const CmdDebuggerModal = {
     const instanceSelect = document.querySelector("#cmd-node-instance-select");
     const inspectorContainer = document.querySelector("#cmd-step-inspector-container");
 
-    if (titleEl) {
+    const renderNodeHeader = () => {
+      if (!titleEl) return;
       if (meta.isHanging) {
         titleEl.innerHTML = `
           <span style="color: #b45309; font-family: monospace;">${meta.rawAddress || meta.address}</span>
@@ -550,10 +551,30 @@ const CmdDebuggerModal = {
         const bpmnDesc = bpmnModel?.flowDescription || "";
         const activeLog = resolvedLogs[this.state.selectedNodeRunIndex] || resolvedLogs[0];
 
+        let activeDurationText = "";
+        if (activeLog && activeLog.LogStart && activeLog.LogEnd) {
+          const parseMs = (dt) => {
+            const match = String(dt).match(/\d+/);
+            return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
+          };
+          const s = parseMs(activeLog.LogStart);
+          const e = parseMs(activeLog.LogEnd);
+          const durMs = e >= s ? (e - s) : (activeLog.Duration ? Number(activeLog.Duration) : 0);
+          if (durMs > 0) {
+            if (durMs < 1000) activeDurationText = `${durMs}ms`;
+            else if (durMs < 60000) activeDurationText = `${(durMs / 1000).toFixed(2)}s`;
+            else activeDurationText = `${Math.floor(durMs / 60000)}m ${Math.round((durMs % 60000) / 1000)}s`;
+          }
+        }
+
         const pkgId = resolvedLogs[0]?.IntegrationArtifact?.PackageId || this.state.packageId || "";
         const iflowUrl = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getIFlowDesignUrl)
           ? CmdCpiApiHelper.getIFlowDesignUrl(nodeId, pkgId)
           : "#";
+
+        const runCountLabel = resolvedLogs.length > 1
+          ? `(Run ${this.state.selectedNodeRunIndex + 1} of ${resolvedLogs.length})`
+          : `(${resolvedLogs.length} run found)`;
 
         titleEl.innerHTML = `
           <div style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
@@ -561,7 +582,7 @@ const CmdDebuggerModal = {
             <a href="${iflowUrl}" target="_blank" class="ui mini basic button" style="padding: 2px 8px; font-size: 0.72rem; font-weight: 600; text-decoration: none; color: #0284c7; border-color: #bae6fd; background: #f0f9ff; border-radius: 4px;" title="Open in new tab">
               <i class="external alternate icon" style="margin-right: 3px; font-size: 0.75rem;"></i> Open iFlow
             </a>
-            <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">(${resolvedLogs.length} run ${resolvedLogs.length === 1 ? "instance" : "instances"} found)</span>
+            <span style="font-size: 0.8rem; font-weight: normal; color: #64748b;">${runCountLabel}</span>
           </div>
           <div style="font-size: 0.78rem; font-family: monospace; color: #64748b; margin-top: 2px;">
             Technical ID: <span style="color: #334155; font-weight: 600;">${escapeHtml(nodeId)}</span>
@@ -571,11 +592,14 @@ const CmdDebuggerModal = {
             <div style="font-size: 0.78rem; color: #475569; margin-top: 4px;">
               <b>Status:</b> <span class="ui mini label ${activeLog.Status === "COMPLETED" ? "green" : activeLog.Status === "FAILED" ? "red" : "orange"}" style="padding: 2px 6px; font-weight: normal;">${escapeHtml(activeLog.Status || "UNKNOWN")}</span>
               <span style="margin-left: 6px;"><b>LogLevel:</b> ${escapeHtml(activeLog.LogLevel || "INFO")}</span>
+              ${activeDurationText ? `<span style="margin-left: 6px;"><b>Duration:</b> <span style="font-weight: 600; color: #0f172a;">${activeDurationText}</span></span>` : ""}
             </div>
           ` : ""}
         `;
       }
-    }
+    };
+
+    renderNodeHeader();
 
     // Per-node run instance dropdown (especially useful for Iterators/Splitters in runtime mode)
     if (instanceContainer && instanceSelect) {
@@ -587,17 +611,30 @@ const CmdDebuggerModal = {
           const opt = document.createElement("option");
           opt.value = idx;
 
-          const timeStr = log.LogStart ? new Date(parseInt(log.LogStart.substr(6, 13) || Date.now())).toLocaleTimeString() : `Run #${idx + 1}`;
-          const status = log.Status || "COMPLETED";
-          opt.textContent = `Run #${idx + 1} of ${resolvedLogs.length}: ${timeStr} [${status}]`;
+          const parseMs = (dt) => {
+            const match = String(dt).match(/\d+/);
+            return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
+          };
+          const s = parseMs(log.LogStart);
+          const e = parseMs(log.LogEnd);
+          const durMs = e >= s ? (e - s) : (log.Duration ? Number(log.Duration) : 0);
+          let durText = "";
+          if (durMs > 0) {
+            durText = durMs < 1000 ? `${durMs}ms` : `${(durMs / 1000).toFixed(2)}s`;
+          }
 
-          if (idx === 0) opt.selected = true;
+          const timeStr = log.LogStart ? new Date(parseMs(log.LogStart)).toLocaleTimeString() : `Run #${idx + 1}`;
+          const status = log.Status || "COMPLETED";
+          opt.textContent = `Run #${idx + 1} of ${resolvedLogs.length}: ${timeStr} [${status}]${durText ? ` - ${durText}` : ""}`;
+
+          if (idx === this.state.selectedNodeRunIndex) opt.selected = true;
           instanceSelect.appendChild(opt);
         });
 
         instanceSelect.onchange = (e) => {
           const chosenIdx = parseInt(e.target.value, 10) || 0;
           this.state.selectedNodeRunIndex = chosenIdx;
+          renderNodeHeader();
           if (typeof CmdStepInspector !== "undefined" && resolvedLogs[chosenIdx]) {
             CmdStepInspector.inspectStepDetails(inspectorContainer, resolvedLogs[chosenIdx]);
           }

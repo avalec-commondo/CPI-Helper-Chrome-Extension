@@ -387,7 +387,7 @@ const CmdTopologyGraph = {
         const isSelected = selectedNodeId && selectedNodeId === flowId;
         const isRoot = node.level === 0;
 
-        // Status determination
+        // Status and Duration determination
         let status = hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
         let statusColor = "#94a3b8"; // Gray for no runs / unexecuted
         if (hasRuns) {
@@ -396,6 +396,34 @@ const CmdTopologyGraph = {
           else if (status === "PROCESSING") statusColor = "#3b82f6";
           else if (status.match(/^(RETRY|ESCALATED|CANCELLED|DISCARDED)$/)) statusColor = "#f59e0b";
         }
+
+        // Calculate total execution duration across all runs of this node
+        let totalDurationMs = 0;
+        if (hasRuns) {
+          logs.forEach((l) => {
+            if (l.LogStart && l.LogEnd) {
+              const parseMs = (dt) => {
+                const match = String(dt).match(/\d+/);
+                return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
+              };
+              const s = parseMs(l.LogStart);
+              const e = parseMs(l.LogEnd);
+              if (e >= s) totalDurationMs += (e - s);
+            } else if (l.Duration) {
+              totalDurationMs += Number(l.Duration);
+            }
+          });
+        }
+
+        const formatDur = (ms) => {
+          if (!ms || ms <= 0) return "0ms";
+          if (ms < 1000) return `${ms}ms`;
+          if (ms < 60000) return `${(ms / 1000).toFixed(2)}s`;
+          const mins = Math.floor(ms / 60000);
+          const secs = Math.round((ms % 60000) / 1000);
+          return `${mins}m ${secs}s`;
+        };
+        const durationText = hasRuns ? formatDur(totalDurationMs) : "";
 
         const bpmnModel = (typeof CmdBpmnModelHelper !== "undefined" && CmdBpmnModelHelper.getBpmnModelFromCache) ? CmdBpmnModelHelper.getBpmnModelFromCache(flowId) : null;
         const artName = (typeof CmdCpiApiHelper !== "undefined" && CmdCpiApiHelper.getArtifactName ? CmdCpiApiHelper.getArtifactName(flowId) : "")
@@ -424,7 +452,7 @@ const CmdTopologyGraph = {
                 : "";
 
         nodeG.innerHTML = `
-          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${!hasRuns ? " (Not executed in this correlation run)" : ""}</title>
+          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${hasRuns ? `\nDuration: ${durationText} (${logs.length} run${logs.length === 1 ? "" : "s"})` : " (Not executed in this correlation run)"}</title>
           <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
                 fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
                 stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
@@ -436,7 +464,7 @@ const CmdTopologyGraph = {
             ${displayName}
           </text>
           <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
-            Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan> ${hasRuns ? `| Lvl: ${escapeHtml(latestLog.LogLevel || "INFO")}` : ""}
+            Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan>${hasRuns && durationText ? ` | <tspan font-weight="600" fill="#334155">${durationText}</tspan>` : ""}
           </text>
           ${rightBadge}
         `;
