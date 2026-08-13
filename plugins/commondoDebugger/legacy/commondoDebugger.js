@@ -1,8 +1,7 @@
 // ===========================================================================
-// COMMNDO IS DEBUGGER - PLUGIN METADATA & REGISTRATION
+// COMMODNO IS DEBUGGER - PLUGIN METADATA & REGISTRATION
 // ===========================================================================
-// Registers the Commondo IS Debugger plugin metadata, sidebar button,
-// and UI5 header toolbar hooks with CPI-Helper.
+// Registers the Commondo IS Debugger plugin metadata and single sidebar entry point with CPI-Helper.
 
 var plugin = {
   metadataVersion: "1.0.0",
@@ -15,7 +14,7 @@ var plugin = {
   description: "Multi-tier iFlow trace debugger, recursive PD call-chain topology graph & trace exporter.",
   settings: {},
 
-  // Dedicated button in CPI-Helper sidebar panel
+  // Single dedicated button in CPI-Helper sidebar panel
   messageSidebarContent: {
     static: true,
     onRender: (pluginHelper, settings) => {
@@ -29,8 +28,8 @@ var plugin = {
       btn.innerHTML = `<i class="sitemap icon" style="margin: 0;"></i> Open Trace Graph Debugger`;
 
       btn.onclick = async () => {
-        if (typeof CmdDebuggerMainModal !== "undefined") {
-          await CmdDebuggerMainModal.openModal(null);
+        if (typeof CmdDebuggerModal !== "undefined") {
+          await CmdDebuggerModal.openModal(null, pluginHelper);
         }
       };
 
@@ -39,50 +38,18 @@ var plugin = {
     },
   },
 
-  // Message sidebar action button (per run)
-  messageSidebarButton: {
-    icon: { type: "icon", text: "xe088" },
-    title: "Commondo Trace Graph",
-    onClick: async (pluginHelper, settings, runInfo, active) => {
-      if (typeof CmdDebuggerMainModal !== "undefined") {
-        await CmdDebuggerMainModal.openModal(runInfo);
-      }
-    },
-  },
-
   // Script editor button
   scriptButton: {
     icon: { type: "icon", text: "xe0b6" },
     title: "Commondo IS Debugger",
     onClick: async (pluginHelper, settings) => {
-      if (typeof CmdDebuggerMainModal !== "undefined") {
-        await CmdDebuggerMainModal.openModal(null);
+      if (typeof CmdDebuggerModal !== "undefined") {
+        await CmdDebuggerModal.openModal(null, pluginHelper);
       }
     },
   },
-
-  // Heartbeat hook to synchronize header Trace IFlows button
-  heartbeat: async (pluginHelper, settings) => {
-    if (typeof CmdHeaderTraceButton !== "undefined" && CmdHeaderTraceButton.injectButton) {
-      await CmdHeaderTraceButton.injectButton();
-    }
-  },
 };
 
-// Auto-register in CPI Helper plugin list
 if (typeof pluginList !== "undefined") {
   pluginList.push(plugin);
-}
-
-// Initialize top toolbar Trace button and global shortcuts
-if (typeof CmdHeaderTraceButton !== "undefined" && CmdHeaderTraceButton.init) {
-  CmdHeaderTraceButton.init();
-}
-
-if (typeof window !== "undefined") {
-  window.openCommondoDebugger = (runInfo) => {
-    if (typeof CmdDebuggerMainModal !== "undefined") {
-      CmdDebuggerMainModal.openModal(runInfo);
-    }
-  };
 }
