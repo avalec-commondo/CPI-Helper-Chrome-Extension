@@ -69,8 +69,18 @@ const CmdStepInspectorView = {
       || logEntry.IntegrationFlowName
       || iFlowId;
 
+    const runGuid = logEntry.MessageGuid || logEntry.Id || "";
+    const runIdHeaderHtml = runGuid
+      ? `<div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 0.76rem; color: #475569;">
+           <span style="font-weight: 600;">Instance ID:</span>
+           <span style="font-family: monospace; color: #0284c7; font-weight: bold; user-select: all;">${escapeHtml(runGuid)}</span>
+         </div>`
+      : "";
+
     container.innerHTML = `
-      <div id="cmd-steps-list-container" style="height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;"></div>
+      <div id="cmd-steps-list-container" style="height: 100%; overflow-y: auto; display: flex; flex-direction: column; gap: 8px; padding-right: 4px;">
+        ${runIdHeaderHtml}
+      </div>
     `;
 
     const stepsListDiv = container.querySelector("#cmd-steps-list-container");

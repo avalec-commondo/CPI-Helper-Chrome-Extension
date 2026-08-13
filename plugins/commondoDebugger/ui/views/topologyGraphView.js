@@ -472,13 +472,14 @@ const CmdTopologyGraphView = {
         const durationText = hasRuns ? formatDur(totalDurationMs) : "";
 
         const cachedModel = store ? store.getCachedBpmnModel(flowId) : null;
-        const artName = (store ? store.getArtifactName(flowId) : "")
-          || cachedModel?.flowName
-          || logs[0]?.IntegrationArtifact?.Name
-          || logs[0]?.IntegrationFlowName
-          || node.displayName
-          || node.name
-          || flowId;
+        const artName =
+          logs[0]?.IntegrationArtifact?.Name ||
+          logs[0]?.IntegrationFlowName ||
+          node.displayName ||
+          node.name ||
+          (store ? store.getArtifactName(flowId) : "") ||
+          cachedModel?.flowName ||
+          flowId;
 
         let rawName = artName;
         if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";

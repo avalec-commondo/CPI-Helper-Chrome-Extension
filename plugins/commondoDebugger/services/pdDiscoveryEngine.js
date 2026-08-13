@@ -20,6 +20,7 @@ const CmdPdDiscoveryEngine = {
     const bpmnService = typeof CmdBpmnParserService !== "undefined" ? CmdBpmnParserService : null;
     const traceService = typeof CmdTraceService !== "undefined" ? CmdTraceService : null;
     const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
+    const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
 
     const parseMs = (ts) => (utils ? utils.parseMs(ts) : new Date(ts).getTime() || 0);
     const matchAddress = (a1, a2) => (utils ? utils.matchEndpointAddress(a1, a2) : String(a1).toLowerCase().replace(/^\/+|\/+$/g, "") === String(a2).toLowerCase().replace(/^\/+|\/+$/g, ""));
@@ -466,9 +467,12 @@ const CmdPdDiscoveryEngine = {
         return true;
       });
 
+      const displayName = latestRun.IntegrationArtifact?.Name || latestRun.IntegrationFlowName || (store ? store.getArtifactName(fid) : "") || model.flowName || fid;
+
       return {
         id: fid,
-        name: model.flowName || fid,
+        name: displayName,
+        displayName: displayName,
         description: model.flowDescription || "",
         level: levels[fid] !== undefined ? levels[fid] : 1,
         isRoot: fid === effectiveRoot,

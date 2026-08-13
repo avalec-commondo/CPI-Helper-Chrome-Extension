@@ -165,10 +165,10 @@ const CmdDebuggerMainModal = {
               </select>
             </div>
 
-            <!-- Right: Trace Manager & Countdown Badge -->
+            <!-- Right: Jump to iFlow & Countdown Badge -->
             <div style="display: flex; align-items: center; gap: 12px;">
-              <button id="cmd-modal-trace-iflows-btn" class="ui mini basic button" style="background: #ffffff !important; border: 1px solid #cbd5e1 !important; color: #0284c7 !important; font-weight: 600; padding: 6px 12px; font-size: 0.8rem;" title="Select and activate TRACE log level for iFlows">
-                Trace IFlows
+              <button id="cmd-modal-jump-iflow-btn" class="ui mini button" style="background: #0070f3 !important; color: #ffffff !important; font-weight: 600; padding: 6px 12px; font-size: 0.8rem;" title="Open currently selected iFlow in SAP CPI Designer (new tab)">
+                Jump to iFlow
               </button>
               <div id="cmd-trace-status-msg" style="display: flex; align-items: center; gap: 6px;"></div>
             </div>
@@ -225,13 +225,16 @@ const CmdDebuggerMainModal = {
         };
       });
 
-      // Event: Trace IFlows Modal Button
-      modal.querySelector("#cmd-modal-trace-iflows-btn").onclick = () => {
-        if (typeof CmdTraceManagerModal !== "undefined") {
-          CmdTraceManagerModal.open((selectedFlows, successCount, totalCount) => {
-            const statusMsg = modal.querySelector("#cmd-trace-status-msg");
-            CmdDebuggerMainModal.startTraceCountdownTimer(statusMsg, Date.now());
-          });
+      // Event: Jump to iFlow in SAP CPI Designer
+      modal.querySelector("#cmd-modal-jump-iflow-btn").onclick = () => {
+        const targetFlowId = CmdDebuggerMainModal.state.selectedNodeId || CmdDebuggerMainModal.state.rootFlowId;
+        if (!targetFlowId) {
+          alert("No iFlow selected.");
+          return;
+        }
+        if (api && api.buildDesignUrl) {
+          const url = api.buildDesignUrl(targetFlowId, CmdDebuggerMainModal.state.packageId);
+          window.open(url, "_blank");
         }
       };
 
@@ -342,10 +345,10 @@ const CmdDebuggerMainModal = {
         opt.value = run.CorrelationId || run.MessageGuid;
 
         const dateStr = utils.formatDateTime ? utils.formatDateTime(run.LogStart) : new Date(run.LogStart).toLocaleString();
-        const durStr = utils.formatDuration ? utils.formatDuration(run.Duration || 0) : `${run.Duration || 0}ms`;
         const status = run.Status || "COMPLETED";
+        const instanceId = run.MessageGuid || run.Id || run.CorrelationId || "";
 
-        opt.textContent = `#${idx + 1} | ${dateStr} | Status: ${status} | Duration: ${durStr}`;
+        opt.textContent = `#${idx + 1} | ${dateStr} | Status: ${status} | ID: ${instanceId}`;
         runSelect.appendChild(opt);
       });
 
@@ -532,8 +535,9 @@ const CmdDebuggerMainModal = {
       nodeRunSelect.innerHTML = "";
       logsForNode.forEach((l, idx) => {
         const opt = document.createElement("option");
+        const runId = l.MessageGuid || l.Id || "";
         opt.value = String(idx);
-        opt.textContent = `Run #${idx + 1} (${l.Status || "COMPLETED"})`;
+        opt.textContent = `Run #${idx + 1} (${l.Status || "COMPLETED"})${runId ? ` | ID: ${runId}` : ""}`;
         nodeRunSelect.appendChild(opt);
       });
       nodeRunSelect.value = "0";
