@@ -111,12 +111,7 @@ const CmdDebuggerMainModal = {
     const escapeHtml = utils.escapeHtml || ((s) => s || "");
 
     this.state.rootFlowId = typeof cpiData !== "undefined" && cpiData.integrationFlowId ? cpiData.integrationFlowId : "";
-    this.state.packageId =
-      typeof cpiData !== "undefined" && cpiData.currentPackageId
-        ? cpiData.currentPackageId
-        : api
-        ? await api.resolveCurrentPackageId(this.state.rootFlowId)
-        : "";
+    this.state.packageId = typeof cpiData !== "undefined" && cpiData.currentPackageId ? cpiData.currentPackageId : api ? await api.resolveCurrentPackageId(this.state.rootFlowId) : "";
 
     let modal = document.querySelector("#cmd-debugger-modal");
     if (!modal) {
@@ -243,10 +238,7 @@ const CmdDebuggerMainModal = {
         const zipService = typeof CmdZipExportService !== "undefined" ? CmdZipExportService : null;
         if (!zipService) return;
 
-        const currentTopo =
-          CmdDebuggerMainModal.state.viewMode === "static"
-            ? CmdDebuggerMainModal.state.staticTopologyData
-            : CmdDebuggerMainModal.state.topologyData;
+        const currentTopo = CmdDebuggerMainModal.state.viewMode === "static" ? CmdDebuggerMainModal.state.staticTopologyData : CmdDebuggerMainModal.state.topologyData;
 
         if (!currentTopo || !currentTopo.nodes || currentTopo.nodes.length === 0) {
           alert("No topology data available to export.");
@@ -396,7 +388,6 @@ const CmdDebuggerMainModal = {
     canvas.innerHTML = `
       <div style="display: flex; align-items: center; justify-content: center; height: 100%; color: #64748b;">
         <div class="ui active centered inline loader"></div>
-        <span style="margin-left: 10px; font-size: 0.9rem;">Resolving multi-flow correlation call chain...</span>
       </div>`;
 
     const corrId = runLog.CorrelationId || runLog.MessageGuid;
@@ -468,15 +459,9 @@ const CmdDebuggerMainModal = {
 
     if (!graphView || !currentTopo) return;
 
-    graphView.renderDirectionalTopology(
-      canvas,
-      currentTopo,
-      this.state.logsByFlowId,
-      this.state.selectedNodeId,
-      (nodeId, logsForNode, extraInfo) => {
-        this.selectTopologyNode(nodeId, logsForNode, extraInfo);
-      }
-    );
+    graphView.renderDirectionalTopology(canvas, currentTopo, this.state.logsByFlowId, this.state.selectedNodeId, (nodeId, logsForNode, extraInfo) => {
+      this.selectTopologyNode(nodeId, logsForNode, extraInfo);
+    });
   },
 
   /**
