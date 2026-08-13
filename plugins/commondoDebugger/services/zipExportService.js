@@ -48,17 +48,14 @@ const CmdZipExportService = {
     const pkgFolder = zip.folder("Commondo_Trace_Package");
 
     const totalNodes = topologyData.nodes.length;
-    let completedSteps = 0;
-    const estimatedTotal = totalNodes * 10;
 
-    function reportProgress(stepName) {
-      completedSteps++;
+    function reportProgress(completed, total, stepText) {
       if (typeof onProgress === "function") {
-        onProgress(completedSteps, Math.max(completedSteps, estimatedTotal), stepName);
+        onProgress(completed, total, stepText);
       }
     }
 
-    reportProgress("Creating package manifest...");
+    reportProgress(0, totalNodes, "Creating package manifest...");
 
     // 1. Manifest
     const manifest = {
@@ -80,12 +77,16 @@ const CmdZipExportService = {
     };
     pkgFolder.file("manifest.json", JSON.stringify(manifest, null, 2));
 
-    // 2. Process each flow
-    for (const node of topologyData.nodes) {
+    // 2. Pre-process each flow and collect step download jobs
+    reportProgress(0, totalNodes, "Fetching flow step definitions...");
+    const allStepJobs = [];
+
+    for (let fIdx = 0; fIdx < topologyData.nodes.length; fIdx++) {
+      const node = topologyData.nodes[fIdx];
       const flowId = node.id;
       const flowFolder = pkgFolder.folder(flowId);
 
-      reportProgress(`Fetching BPMN & logs for ${node.name || flowId}...`);
+      reportProgress(fIdx + 1, totalNodes, `Loading flow structure (${fIdx + 1}/${totalNodes})...`);
 
       // BPMN Model & step names
       const bpmnModel = bpmnService ? await bpmnService.getModel(flowId) : { steps: {} };
@@ -126,39 +127,63 @@ const CmdZipExportService = {
 
           const stepsFolder = flowFolder.folder("steps");
 
-          // Harvest step payloads with worker pool limit 8
-          await this.asyncPool(8, runSteps, async (step) => {
+          runSteps.forEach((step, sIdx) => {
             if (step.ChildCount !== undefined) {
-              try {
-                const traceMessages = await api.fetchStepTraceMessages(runId, step.ChildCount);
-                if (traceMessages.length > 0) {
-                  const traceId = traceMessages[0].TraceId;
-                  const stepPrefix = `${String(step.ChildCount).padStart(3, "0")}_${step.StepId}`;
+              const rawStepId = step.StepId || step.ModelStepId || `Step_${sIdx + 1}`;
+              const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
+              const humanName = stepNamesMap[baseShapeId] || stepNamesMap[baseShapeId.toLowerCase()] || stepNamesMap[rawStepId];
+              const cleanName = (humanName || baseShapeId || rawStepId).replace(/[^a-zA-Z0-9_-]/g, "_");
+              const stepPrefix = `${String(step.ChildCount).padStart(3, "0")}_${cleanName}`;
 
-                  const [props, headers, body] = await Promise.all([
-                    api.fetchStepExchangeProperties(traceId),
-                    api.fetchStepHeaders(traceId),
-                    api.fetchStepBodyPayload(traceId, "text"),
-                  ]);
-
-                  if (props && props.length > 0) {
-                    stepsFolder.file(`${stepPrefix}_properties.json`, JSON.stringify(props, null, 2));
-                  }
-                  if (headers && headers.length > 0) {
-                    stepsFolder.file(`${stepPrefix}_headers.json`, JSON.stringify(headers, null, 2));
-                  }
-                  if (body) {
-                    stepsFolder.file(`${stepPrefix}_body.txt`, body);
-                  }
-                }
-              } catch (eStep) {}
+              allStepJobs.push({
+                runId,
+                childCount: step.ChildCount,
+                stepPrefix,
+                stepsFolder,
+              });
             }
           });
         }
       }
     }
 
-    reportProgress("Compressing ZIP archive...");
+    // 3. Harvest step payloads concurrently with live progress tracking
+    const totalSteps = allStepJobs.length;
+    let completedSteps = 0;
+
+    if (totalSteps > 0) {
+      reportProgress(0, totalSteps, `Packaging (0/${totalSteps})...`);
+
+      await this.asyncPool(8, allStepJobs, async (job) => {
+        try {
+          const traceMessages = await api.fetchStepTraceMessages(job.runId, job.childCount);
+          if (traceMessages.length > 0) {
+            const traceId = traceMessages[0].TraceId;
+
+            const [props, headers, body] = await Promise.all([
+              api.fetchStepExchangeProperties(traceId),
+              api.fetchStepHeaders(traceId),
+              api.fetchStepBodyPayload(traceId, "text"),
+            ]);
+
+            if (props && props.length > 0) {
+              job.stepsFolder.file(`${job.stepPrefix}_properties.json`, JSON.stringify(props, null, 2));
+            }
+            if (headers && headers.length > 0) {
+              job.stepsFolder.file(`${job.stepPrefix}_headers.json`, JSON.stringify(headers, null, 2));
+            }
+            if (body) {
+              job.stepsFolder.file(`${job.stepPrefix}_body.txt`, body);
+            }
+          }
+        } catch (eStep) {} finally {
+          completedSteps++;
+          reportProgress(completedSteps, totalSteps, `Packaging (${completedSteps}/${totalSteps})...`);
+        }
+      });
+    }
+
+    reportProgress(totalSteps, totalSteps, "Compressing ZIP...");
 
     // Generate ZIP blob (Deflate level 1 for instant compression)
     const zipBlob = await zip.generateAsync({

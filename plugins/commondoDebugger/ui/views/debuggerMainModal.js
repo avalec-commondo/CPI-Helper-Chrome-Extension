@@ -254,18 +254,24 @@ const CmdDebuggerMainModal = {
         }
 
         const exportBtn = modal.querySelector("#cmd-modal-export-zip-btn");
-        const originalText = exportBtn.innerText;
-        exportBtn.classList.add("loading");
+        const originalHtml = exportBtn.innerHTML;
+        exportBtn.disabled = true;
+
+        const setBtnProgress = (text) => {
+          exportBtn.innerHTML = `<i class="spinner loading icon" style="margin-right: 4px;"></i> ${text}`;
+        };
+
+        setBtnProgress("Preparing...");
 
         try {
           await zipService.exportTracePackage(currentTopo, (done, total, text) => {
-            exportBtn.innerText = `${text} (${done}/${total})`;
+            setBtnProgress(text);
           });
         } catch (eZip) {
           alert("Export failed: " + eZip.message);
         } finally {
-          exportBtn.classList.remove("loading");
-          exportBtn.innerText = originalText;
+          exportBtn.disabled = false;
+          exportBtn.innerHTML = originalHtml;
         }
       };
 
