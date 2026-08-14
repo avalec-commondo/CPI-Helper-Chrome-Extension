@@ -109,6 +109,18 @@ const CmdZipExportService = {
       const primaryRun = node.runs?.[0];
       if (primaryRun && primaryRun.MessageGuid && api) {
         const messageGuid = primaryRun.MessageGuid;
+
+        if (node.status === "FAILED" || primaryRun.Status === "FAILED" || primaryRun.Status === "ESCALATED") {
+          try {
+            const errText = await api.fetchErrorInformation(messageGuid);
+            if (errText) {
+              flowFolder.file("error_information.txt", errText);
+              logInfo.errorInformation = errText;
+              flowFolder.file("log_info.json", JSON.stringify(logInfo, null, 2));
+            }
+          } catch (eErr) {}
+        }
+
         const runs = await api.fetchMessageRuns(messageGuid);
 
         if (runs.length > 0) {

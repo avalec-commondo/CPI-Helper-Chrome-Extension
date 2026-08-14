@@ -345,6 +345,47 @@ const CmdApiClient = {
     return res.ok ? res.data : null;
   },
 
+  async fetchErrorInformation(messageGuid, runId = null) {
+    if (!messageGuid && !runId) return null;
+
+    if (messageGuid) {
+      try {
+        const rawText = await this.getText(`MessageProcessingLogs('${encodeURIComponent(messageGuid)}')/ErrorInformation/$value`);
+        if (rawText && typeof rawText === "string" && rawText.trim()) {
+          return rawText.trim();
+        }
+      } catch (e1) {}
+
+      try {
+        const errorJson = await this.getJson(`MessageProcessingLogs('${encodeURIComponent(messageGuid)}')/ErrorInformation?$format=json`);
+        if (errorJson) {
+          const msg = errorJson.ErrorMessage || errorJson.LastError || errorJson.ModelStepId || errorJson.StepId;
+          if (msg) return String(msg).trim();
+          if (typeof errorJson === "string") return errorJson.trim();
+        }
+      } catch (e2) {}
+    }
+
+    if (runId) {
+      try {
+        const runText = await this.getText(`MessageProcessingLogRuns('${encodeURIComponent(runId)}')/ErrorInformation/$value`);
+        if (runText && typeof runText === "string" && runText.trim()) {
+          return runText.trim();
+        }
+      } catch (e3) {}
+
+      try {
+        const runJson = await this.getJson(`MessageProcessingLogRuns('${encodeURIComponent(runId)}')/ErrorInformation?$format=json`);
+        if (runJson) {
+          const msg = runJson.ErrorMessage || runJson.LastError;
+          if (msg) return String(msg).trim();
+        }
+      } catch (e4) {}
+    }
+
+    return null;
+  },
+
   // -------------------------------------------------------------------------
   // 4. Log Level Management (Operations Command)
   // -------------------------------------------------------------------------

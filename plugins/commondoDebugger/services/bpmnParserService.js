@@ -90,17 +90,33 @@ const CmdBpmnParserService = {
     const inbound = [];
     const steps = {};
     const paramMap = {};
+    const exceptionShapes = {};
 
-    // 1. Extract Step Names from shapes
-    function extractShapes(obj) {
+    // 1. Extract Step Names and Exception Subprocess shapes
+    function extractShapes(obj, inExceptionScope = false) {
       if (!obj || typeof obj !== "object") return;
       const props = obj.properties || obj.attributes || {};
       const id = obj.id || obj.resourceId || "";
       const name = (props.name || obj.name?.value || obj.name || "").trim();
+      const activityType = String(props.activityType || props.type || obj.type || "");
 
-      if (id && name && name !== id) {
-        steps[id] = name;
-        steps[id.toLowerCase()] = name;
+      const isException = inExceptionScope ||
+        activityType.toLowerCase().includes("errorstart") ||
+        activityType.toLowerCase().includes("exceptionsubprocess") ||
+        name.toLowerCase().includes("exception subprocess") ||
+        name.toLowerCase().includes("error subprocess") ||
+        String(props.isException || "").toLowerCase() === "true" ||
+        String(props.triggeredByEvent || "").toLowerCase() === "true";
+
+      if (id) {
+        if (name && name !== id) {
+          steps[id] = name;
+          steps[id.toLowerCase()] = name;
+        }
+        if (isException) {
+          exceptionShapes[id] = true;
+          exceptionShapes[id.toLowerCase()] = true;
+        }
       }
 
       if (props.activityType === "ProcessDirect" || props.adapterType === "ProcessDirect" || obj.adapterType === "ProcessDirect" || (props.address && String(props.address).startsWith("/"))) {
@@ -120,10 +136,11 @@ const CmdBpmnParserService = {
         if (!inbound.some((i) => i.address === chan.address)) inbound.push(chan);
       }
 
-      if (Array.isArray(obj)) {
-        obj.forEach(extractShapes);
-      } else {
-        Object.values(obj).forEach(extractShapes);
+      const childItems = Array.isArray(obj)
+        ? obj
+        : (obj.childShapes || obj.shapes || obj.children || (typeof obj === "object" ? Object.values(obj) : []));
+      if (Array.isArray(childItems)) {
+        childItems.forEach((child) => extractShapes(child, isException));
       }
     }
     extractShapes(modelJson.bpmnModel?.shapes || modelJson.shapes || modelJson);
@@ -207,6 +224,7 @@ const CmdBpmnParserService = {
       inbound,
       steps,
       paramMap,
+      exceptionShapes: exceptionShapes || {},
     };
   },
 
@@ -398,6 +416,43 @@ const CmdBpmnParserService = {
           else outbound.push(chan);
         }
       }
+
+      // Exception Subprocesses & Error Start Events
+      const subProcesses = xmlDoc.getElementsByTagNameNS("*", "subProcess");
+      const exceptionShapes = {};
+
+      for (let sIdx = 0; sIdx < subProcesses.length; sIdx++) {
+        const sp = subProcesses[sIdx];
+        const isEventSub = sp.getAttribute("triggeredByEvent") === "true";
+        const hasErrorStart = sp.getElementsByTagNameNS("*", "errorStartEvent").length > 0 ||
+                              sp.getElementsByTagNameNS("*", "errorEventDefinition").length > 0;
+        const spName = (sp.getAttribute("name") || "").toLowerCase();
+        if (isEventSub || hasErrorStart || spName.includes("exception") || spName.includes("error")) {
+          const spId = sp.getAttribute("id");
+          if (spId) {
+            exceptionShapes[spId] = true;
+            exceptionShapes[spId.toLowerCase()] = true;
+          }
+          const innerEls = sp.getElementsByTagName("*");
+          for (let eIdx = 0; eIdx < innerEls.length; eIdx++) {
+            const eid = innerEls[eIdx].getAttribute("id");
+            if (eid) {
+              exceptionShapes[eid] = true;
+              exceptionShapes[eid.toLowerCase()] = true;
+            }
+          }
+        }
+      }
+
+      // Also check individual error start events
+      const errStarts = xmlDoc.getElementsByTagNameNS("*", "errorStartEvent");
+      for (let esIdx = 0; esIdx < errStarts.length; esIdx++) {
+        const esId = errStarts[esIdx].getAttribute("id");
+        if (esId) {
+          exceptionShapes[esId] = true;
+          exceptionShapes[esId.toLowerCase()] = true;
+        }
+      }
     } catch (eXml) {
       console.warn(`[CmdBpmnParserService] Error parsing BPMN XML for ${iflowId}:`, eXml);
     }
@@ -410,6 +465,7 @@ const CmdBpmnParserService = {
       inbound,
       steps,
       paramMap,
+      exceptionShapes: typeof exceptionShapes !== "undefined" ? exceptionShapes : {},
     };
   },
 };

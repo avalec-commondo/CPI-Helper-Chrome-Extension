@@ -194,7 +194,7 @@ const CmdDebuggerMainModal = {
               </div>
 
               <!-- Inspector Body / Step List -->
-              <div id="cmd-inspector-content" style="flex: 1; min-height: 0; overflow-y: auto; padding: 10px;">
+              <div id="cmd-inspector-content" style="flex: 1; min-height: 0; overflow-y: auto; padding: 10px 12px 24px 12px; box-sizing: border-box;">
                 <div style="color: #64748b; font-size: 0.85rem; text-align: center; margin-top: 60px;">
                   Click any iFlow card on the left to inspect its execution steps and trace payloads.
                 </div>
