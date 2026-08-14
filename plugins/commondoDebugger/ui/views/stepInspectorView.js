@@ -43,18 +43,18 @@ const CmdStepInspectorView = {
       }
     }
 
-    // 1. Sort steps chronologically by StepStart (with fallback to ChildCount)
+    // 1. Sort steps deterministically by ChildCount (with fallback to StepStart)
     if (steps && Array.isArray(steps) && steps.length > 1) {
       steps.sort((a, b) => {
-        const aStart = parseMs(a.StepStart);
-        const bStart = parseMs(b.StepStart);
-        if (aStart && bStart && aStart !== bStart) {
-          return aStart - bStart;
-        }
         const aChild = Number(a.ChildCount || 0);
         const bChild = Number(b.ChildCount || 0);
         if (aChild && bChild && aChild !== bChild) {
           return aChild - bChild;
+        }
+        const aStart = parseMs(a.StepStart);
+        const bStart = parseMs(b.StepStart);
+        if (aStart && bStart && aStart !== bStart) {
+          return aStart - bStart;
         }
         return 0;
       });
