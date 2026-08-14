@@ -62,13 +62,81 @@ var plugin = {
     },
   },
 
-  // Heartbeat hook to synchronize header Trace IFlows button
+  // Heartbeat hook to synchronize header Trace IFlows button and check jump tokens
   heartbeat: async (pluginHelper, settings) => {
     if (typeof CmdHeaderTraceButton !== "undefined" && CmdHeaderTraceButton.injectButton) {
       await CmdHeaderTraceButton.injectButton();
     }
+    checkPendingInlineTraceJump();
   },
 };
+
+// One-shot auto-activation handler for Jump to iFlow with active run instance
+async function checkPendingInlineTraceJump() {
+  if (typeof window === "undefined") return;
+  if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
+
+  chrome.storage.local.get(["cmd_pending_inline_trace"], async (result) => {
+    const pending = result ? result.cmd_pending_inline_trace : null;
+    if (!pending || !pending.messageGuid) return;
+
+    // 1. Immediately delete from storage so it is strictly one-shot
+    try {
+      chrome.storage.local.remove(["cmd_pending_inline_trace"]);
+    } catch (eDel) {}
+
+    // 2. Discard if older than 45 seconds
+    if (pending.timestamp && Date.now() - pending.timestamp > 45000) {
+      return;
+    }
+
+    const targetGuid = pending.messageGuid;
+    const targetFlowId = pending.targetFlowId || "";
+
+    // 3. Verify that current page matches targetFlowId if available
+    const targetLow = String(targetFlowId).toLowerCase().trim();
+    const activeFlow = (typeof cpiData !== "undefined" && cpiData.integrationFlowId) ? String(cpiData.integrationFlowId).toLowerCase().trim() : "";
+    const hrefDecoded = decodeURIComponent(window.location.href).toLowerCase();
+
+    if (targetLow && activeFlow && targetLow !== activeFlow && !hrefDecoded.includes(targetLow)) {
+      return;
+    }
+
+    // 4. Wait for SAP BPMN SVG canvas to finish rendering and trigger showInlineTrace on the exact run
+    let attempts = 0;
+    const checkCanvasInterval = setInterval(async () => {
+      attempts++;
+      const shapes = document.querySelectorAll("[id^='BPMNShape_'], [id^='BPMNEdge_']");
+      if (shapes && shapes.length > 0 && typeof showInlineTrace === "function") {
+        clearInterval(checkCanvasInterval);
+        try {
+          if (typeof hideInlineTrace === "function") hideInlineTrace();
+
+          // Mark the exact message in the sidebar as active so clickTrace targets this specific run
+          if (typeof activeInlineItem !== "undefined") {
+            activeInlineItem = targetGuid;
+          }
+          const targetBtn = document.querySelector(`.cpiHelper_inlineInfo-button.${targetGuid}`);
+          if (targetBtn) {
+            document.querySelectorAll(".cpiHelper_inlineInfo-button").forEach((b) => b.classList.remove("cpiHelper_inlineInfo-active"));
+            targetBtn.classList.add("cpiHelper_inlineInfo-active");
+          }
+
+          const success = await showInlineTrace(targetGuid);
+          if (success && typeof showToast === "function") {
+            showToast("Inline Trace Activated for Run", targetGuid.substring(0, 8) + "...", "info");
+          } else if (!success && typeof showToast === "function") {
+            showToast("No trace payloads for this run", "Ensure TRACE logging was enabled", "warning");
+          }
+        } catch (eTrace) {
+          console.warn("[CommondoDebugger] Auto inline trace activation failed:", eTrace);
+        }
+      } else if (attempts > 60) {
+        clearInterval(checkCanvasInterval);
+      }
+    }, 500);
+  });
+}
 
 // Auto-register in CPI Helper plugin list
 if (typeof pluginList !== "undefined") {
@@ -80,7 +148,10 @@ if (typeof CmdHeaderTraceButton !== "undefined" && CmdHeaderTraceButton.init) {
   CmdHeaderTraceButton.init();
 }
 
+// Check for pending jump token on load
 if (typeof window !== "undefined") {
+  setTimeout(checkPendingInlineTraceJump, 200);
+
   window.openCommondoDebugger = (runInfo) => {
     if (typeof CmdDebuggerMainModal !== "undefined") {
       CmdDebuggerMainModal.openModal(runInfo);

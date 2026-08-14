@@ -221,12 +221,43 @@ const CmdDebuggerMainModal = {
       });
 
       // Event: Jump to iFlow in SAP CPI Designer
-      modal.querySelector("#cmd-modal-jump-iflow-btn").onclick = () => {
+      modal.querySelector("#cmd-modal-jump-iflow-btn").onclick = async () => {
         const targetFlowId = CmdDebuggerMainModal.state.selectedNodeId || CmdDebuggerMainModal.state.rootFlowId;
         if (!targetFlowId) {
           alert("No iFlow selected.");
           return;
         }
+
+        const logs = CmdDebuggerMainModal.state.logsByFlowId[targetFlowId] || [];
+        const nodeRunSelect = modal.querySelector("#cmd-node-run-select");
+        let selectedRunIndex = 0;
+        if (nodeRunSelect && nodeRunSelect.value !== "") {
+          const parsed = parseInt(nodeRunSelect.value, 10);
+          if (!isNaN(parsed) && parsed >= 0) selectedRunIndex = parsed;
+        } else if (typeof CmdDebuggerMainModal.state.selectedNodeRunIndex === "number") {
+          selectedRunIndex = CmdDebuggerMainModal.state.selectedNodeRunIndex;
+        }
+
+        const selectedLog = logs[selectedRunIndex] || logs[0];
+        const messageGuid = selectedLog?.MessageGuid || selectedLog?.Id || "";
+
+        if (messageGuid && typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+          try {
+            await new Promise((res) => {
+              chrome.storage.local.set(
+                {
+                  cmd_pending_inline_trace: {
+                    targetFlowId,
+                    messageGuid,
+                    timestamp: Date.now(),
+                  },
+                },
+                res
+              );
+            });
+          } catch (eStorage) {}
+        }
+
         if (api && api.buildDesignUrl) {
           const url = api.buildDesignUrl(targetFlowId, CmdDebuggerMainModal.state.packageId);
           window.open(url, "_blank");
@@ -529,6 +560,8 @@ const CmdDebuggerMainModal = {
       return;
     }
 
+    this.state.selectedNodeRunIndex = 0;
+
     if (logsForNode.length > 1) {
       runSelectorDiv.style.display = "block";
       nodeRunSelect.innerHTML = "";
@@ -552,6 +585,7 @@ const CmdDebuggerMainModal = {
       nodeRunSelect.value = "0";
       nodeRunSelect.onchange = () => {
         const selectedIdx = parseInt(nodeRunSelect.value, 10);
+        CmdDebuggerMainModal.state.selectedNodeRunIndex = selectedIdx;
         if (stepInspector && logsForNode[selectedIdx]) {
           stepInspector.inspectStepDetails(contentDiv, logsForNode[selectedIdx]);
         }
