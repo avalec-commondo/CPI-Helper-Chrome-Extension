@@ -72,47 +72,71 @@ var plugin = {
 };
 
 // One-shot auto-activation handler for Jump to iFlow with active run instance
+let isActivatingInlineTrace = false;
+let hasActivatedForTab = false;
+
 async function checkPendingInlineTraceJump() {
-  if (typeof window === "undefined") return;
+  if (isActivatingInlineTrace || hasActivatedForTab || typeof window === "undefined") return;
   if (typeof chrome === "undefined" || !chrome.storage || !chrome.storage.local) return;
 
-  chrome.storage.local.get(["cmd_pending_inline_trace"], async (result) => {
-    const pending = result ? result.cmd_pending_inline_trace : null;
-    if (!pending || !pending.messageGuid) return;
+  isActivatingInlineTrace = true;
 
-    // 1. Immediately delete from storage so it is strictly one-shot
-    try {
-      chrome.storage.local.remove(["cmd_pending_inline_trace"]);
-    } catch (eDel) {}
-
-    // 2. Discard if older than 45 seconds
-    if (pending.timestamp && Date.now() - pending.timestamp > 45000) {
+  chrome.storage.local.get(["cmd_pending_jumps"], async (result) => {
+    const queue = result ? result.cmd_pending_jumps : null;
+    if (!queue || typeof queue !== "object") {
+      isActivatingInlineTrace = false;
       return;
     }
 
-    const targetGuid = pending.messageGuid;
-    const targetFlowId = pending.targetFlowId || "";
-
-    // 3. Verify that current page matches targetFlowId if available
-    const targetLow = String(targetFlowId).toLowerCase().trim();
+    const now = Date.now();
     const activeFlow = (typeof cpiData !== "undefined" && cpiData.integrationFlowId) ? String(cpiData.integrationFlowId).toLowerCase().trim() : "";
     const hrefDecoded = decodeURIComponent(window.location.href).toLowerCase();
 
-    if (targetLow && activeFlow && targetLow !== activeFlow && !hrefDecoded.includes(targetLow)) {
+    // Find the matching flow entry for this current tab
+    let matchedKey = null;
+    let matchedPending = null;
+
+    for (const key of Object.keys(queue)) {
+      const entry = queue[key];
+      if (!entry || !entry.messageGuid) continue;
+
+      // Discard expired (>30 seconds)
+      if (entry.timestamp && now - entry.timestamp > 30000) {
+        continue;
+      }
+
+      const keyLow = String(key).toLowerCase().trim();
+      if ((activeFlow && keyLow === activeFlow) || hrefDecoded.includes(keyLow)) {
+        matchedKey = key;
+        matchedPending = entry;
+        break;
+      }
+    }
+
+    if (!matchedKey || !matchedPending) {
+      isActivatingInlineTrace = false;
       return;
     }
 
-    // 4. Wait for SAP BPMN SVG canvas to finish rendering and trigger showInlineTrace on the exact run
-    let attempts = 0;
-    const checkCanvasInterval = setInterval(async () => {
-      attempts++;
+    const targetGuid = matchedPending.messageGuid;
+
+    const removeMatchedKey = () => {
+      try {
+        chrome.storage.local.get(["cmd_pending_jumps"], (curRes) => {
+          const curQueue = curRes?.cmd_pending_jumps || {};
+          delete curQueue[matchedKey];
+          chrome.storage.local.set({ cmd_pending_jumps: curQueue });
+        });
+      } catch (e) {}
+    };
+
+    const tryActivate = async () => {
       const shapes = document.querySelectorAll("[id^='BPMNShape_'], [id^='BPMNEdge_']");
       if (shapes && shapes.length > 0 && typeof showInlineTrace === "function") {
-        clearInterval(checkCanvasInterval);
         try {
           if (typeof hideInlineTrace === "function") hideInlineTrace();
 
-          // Mark the exact message in the sidebar as active so clickTrace targets this specific run
+          // Mark matching sidebar button as active
           if (typeof activeInlineItem !== "undefined") {
             activeInlineItem = targetGuid;
           }
@@ -123,18 +147,38 @@ async function checkPendingInlineTraceJump() {
           }
 
           const success = await showInlineTrace(targetGuid);
+          hasActivatedForTab = true;
           if (success && typeof showToast === "function") {
-            showToast("Inline Trace Activated for Run", targetGuid.substring(0, 8) + "...", "info");
-          } else if (!success && typeof showToast === "function") {
-            showToast("No trace payloads for this run", "Ensure TRACE logging was enabled", "warning");
+            showToast("Inline Trace Activated", `Run ID: ${targetGuid.substring(0, 8)}...`, "info");
           }
         } catch (eTrace) {
           console.warn("[CommondoDebugger] Auto inline trace activation failed:", eTrace);
+        } finally {
+          removeMatchedKey();
+          isActivatingInlineTrace = false;
         }
-      } else if (attempts > 60) {
-        clearInterval(checkCanvasInterval);
+        return true;
       }
-    }, 500);
+      return false;
+    };
+
+    // Fast check immediately
+    const activatedNow = await tryActivate();
+    if (activatedNow) return;
+
+    // Polling loop for canvas readiness (up to 30 seconds: 75 attempts x 400ms)
+    let attempts = 0;
+    const checkCanvasInterval = setInterval(async () => {
+      attempts++;
+      const done = await tryActivate();
+      if (done || attempts > 75) {
+        clearInterval(checkCanvasInterval);
+        if (!done) {
+          removeMatchedKey();
+          isActivatingInlineTrace = false;
+        }
+      }
+    }, 400);
   });
 }
 

@@ -244,16 +244,25 @@ const CmdDebuggerMainModal = {
         if (messageGuid && typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
           try {
             await new Promise((res) => {
-              chrome.storage.local.set(
-                {
-                  cmd_pending_inline_trace: {
-                    targetFlowId,
-                    messageGuid,
-                    timestamp: Date.now(),
-                  },
-                },
-                res
-              );
+              chrome.storage.local.get(["cmd_pending_jumps"], (result) => {
+                const now = Date.now();
+                const queue = result?.cmd_pending_jumps || {};
+
+                // Clean up expired jumps (>30 seconds)
+                Object.keys(queue).forEach((k) => {
+                  if (queue[k]?.timestamp && now - queue[k].timestamp > 30000) {
+                    delete queue[k];
+                  }
+                });
+
+                // Add / update this specific target flow jump
+                queue[targetFlowId] = {
+                  messageGuid,
+                  timestamp: now,
+                };
+
+                chrome.storage.local.set({ cmd_pending_jumps: queue }, res);
+              });
             });
           } catch (eStorage) {}
         }
