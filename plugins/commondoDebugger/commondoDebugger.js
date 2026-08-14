@@ -134,16 +134,24 @@ async function checkPendingInlineTraceJump() {
       const shapes = document.querySelectorAll("[id^='BPMNShape_'], [id^='BPMNEdge_']");
       if (shapes && shapes.length > 0 && typeof showInlineTrace === "function") {
         try {
-          if (typeof hideInlineTrace === "function") hideInlineTrace();
-
-          // Mark matching sidebar button as active
+          // Mark matching sidebar button as active, or inject hidden holder for older runs outside top 10
           if (typeof activeInlineItem !== "undefined") {
             activeInlineItem = targetGuid;
           }
+          document.querySelectorAll(".cpiHelper_inlineInfo-button").forEach((b) => b.classList.remove("cpiHelper_inlineInfo-active"));
+
           const targetBtn = document.querySelector(`.cpiHelper_inlineInfo-button.${targetGuid}`);
           if (targetBtn) {
-            document.querySelectorAll(".cpiHelper_inlineInfo-button").forEach((b) => b.classList.remove("cpiHelper_inlineInfo-active"));
             targetBtn.classList.add("cpiHelper_inlineInfo-active");
+          } else {
+            let holder = document.getElementById("cmd-inline-active-holder");
+            if (!holder) {
+              holder = document.createElement("div");
+              holder.id = "cmd-inline-active-holder";
+              holder.style.display = "none";
+              document.body.appendChild(holder);
+            }
+            holder.className = `${targetGuid} cpiHelper_inlineInfo-button cpiHelper_inlineInfo-active`;
           }
 
           const success = await showInlineTrace(targetGuid);
