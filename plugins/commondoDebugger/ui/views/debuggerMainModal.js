@@ -184,12 +184,12 @@ const CmdDebuggerMainModal = {
             <div id="cmd-step-inspector-container" style="flex: 7; min-width: 320px; max-width: 480px; height: 100%; border: 1px solid #e2e8f0; border-radius: 6px; background: #ffffff; display: flex; flex-direction: column; overflow: hidden;">
               
               <!-- Inspector Header -->
-              <div id="cmd-inspector-header" style="flex-shrink: 0; background: #f1f5f9; padding: 10px 14px; border-bottom: 1px solid #e2e8f0; display: flex; justify-content: space-between; align-items: center;">
+              <div id="cmd-inspector-header" style="flex-shrink: 0; background: #f1f5f9; padding: 10px 14px; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px;">
                 <div style="font-weight: 600; color: #1e293b; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   <span id="cmd-inspector-title">Step Trace Inspector</span>
                 </div>
-                <div id="cmd-inspector-run-selector" style="display: none; align-items: center; gap: 4px;">
-                  <select id="cmd-node-run-select" style="padding: 2px 6px; font-size: 0.75rem; border-radius: 4px; border: 1px solid #cbd5e1;"></select>
+                <div id="cmd-inspector-run-selector" style="display: none; width: 100%;">
+                  <select id="cmd-node-run-select" class="ui fluid dropdown" style="width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff;"></select>
                 </div>
               </div>
 
@@ -508,7 +508,15 @@ const CmdDebuggerMainModal = {
       return;
     }
 
-    titleElem.innerText = nodeId;
+    const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
+    const humanName =
+      logsForNode[0]?.IntegrationArtifact?.Name ||
+      logsForNode[0]?.IntegrationFlowName ||
+      (store ? store.getArtifactName(nodeId) : "") ||
+      nodeId;
+
+    titleElem.innerText = humanName;
+    titleElem.title = `Technical ID: ${nodeId}`;
 
     if (!logsForNode || logsForNode.length === 0) {
       runSelectorDiv.style.display = "none";
@@ -522,7 +530,7 @@ const CmdDebuggerMainModal = {
     }
 
     if (logsForNode.length > 1) {
-      runSelectorDiv.style.display = "flex";
+      runSelectorDiv.style.display = "block";
       nodeRunSelect.innerHTML = "";
       logsForNode.forEach((l, idx) => {
         const opt = document.createElement("option");
