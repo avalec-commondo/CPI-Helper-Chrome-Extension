@@ -497,8 +497,23 @@ const CmdTopologyGraphView = {
              <text x="${pos.x + pos.width - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
           : "";
 
+        let runsBreakdownText = "";
+        if (logs.length > 1) {
+          runsBreakdownText = "\n\nRuns Duration Breakdown:\n" + logs.map((l, i) => {
+            const parseMsFn = (dt) => {
+              if (utils && utils.parseMs) return utils.parseMs(dt);
+              const match = String(dt).match(/\d+/);
+              return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
+            };
+            const s = parseMsFn(l.LogStart);
+            const e = parseMsFn(l.LogEnd);
+            const d = (s && e && e >= s) ? (e - s) : Number(l.Duration || 0);
+            return `  • Run #${i + 1}: ${formatDur(d)} (${l.Status || "COMPLETED"})`;
+          }).join("\n");
+        }
+
         nodeG.innerHTML = `
-          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${hasRuns ? `\nDuration: ${durationText} (${logs.length} run${logs.length === 1 ? "" : "s"})` : " (Not executed in this correlation run)"}</title>
+          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${hasRuns ? `\nTotal Duration: ${durationText} (${logs.length} run${logs.length === 1 ? "" : "s"})${runsBreakdownText}` : " (Not executed in this correlation run)"}</title>
           <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
                 fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
                 stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
@@ -510,7 +525,7 @@ const CmdTopologyGraphView = {
             ${displayName}
           </text>
           <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
-            Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan>${hasRuns && durationText ? ` | <tspan font-weight="600" fill="#334155">${durationText}</tspan>` : ""}
+            Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan>${hasRuns && durationText ? ` | <tspan font-weight="600" fill="#334155">${logs.length > 1 ? `Total: ${durationText}` : durationText}</tspan>` : ""}
           </text>
           ${rightBadge}
         `;

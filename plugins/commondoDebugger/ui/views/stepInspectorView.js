@@ -70,10 +70,18 @@ const CmdStepInspectorView = {
       || iFlowId;
 
     const runGuid = logEntry.MessageGuid || logEntry.Id || "";
+    const logStartMs = parseMs(logEntry.LogStart);
+    const logEndMs = parseMs(logEntry.LogEnd);
+    const runDurMs = (logStartMs && logEndMs && logEndMs >= logStartMs) ? (logEndMs - logStartMs) : Number(logEntry.Duration || 0);
+    const runDurFormatted = utils.formatDuration ? utils.formatDuration(runDurMs) : `${runDurMs}ms`;
+
     const runIdHeaderHtml = runGuid
-      ? `<div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 0.76rem; color: #475569;">
-           <span style="font-weight: 600;">Instance ID:</span>
-           <span style="font-family: monospace; color: #0284c7; font-weight: bold; user-select: all;">${escapeHtml(runGuid)}</span>
+      ? `<div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 0.76rem; color: #475569; gap: 8px;">
+           <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; min-width: 0;">
+             <span style="font-weight: 600; flex-shrink: 0;">Instance ID:</span>
+             <span style="font-family: monospace; color: #0284c7; font-weight: bold; user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(runGuid)}</span>
+           </div>
+           <span style="flex-shrink: 0; font-weight: 600; color: #334155; background: #e2e8f0; border-radius: 3px; padding: 1px 6px;" title="Duration of this run">${runDurFormatted}</span>
          </div>`
       : "";
 

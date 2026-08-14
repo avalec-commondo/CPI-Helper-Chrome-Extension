@@ -527,8 +527,18 @@ const CmdDebuggerMainModal = {
       logsForNode.forEach((l, idx) => {
         const opt = document.createElement("option");
         const runId = l.MessageGuid || l.Id || "";
+        const parseMs = (dt) => {
+          if (utils && utils.parseMs) return utils.parseMs(dt);
+          const match = String(dt).match(/\d+/);
+          return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
+        };
+        const s = parseMs(l.LogStart);
+        const e = parseMs(l.LogEnd);
+        const durMs = (s && e && e >= s) ? (e - s) : Number(l.Duration || 0);
+        const durStr = utils && utils.formatDuration ? utils.formatDuration(durMs) : `${durMs}ms`;
+
         opt.value = String(idx);
-        opt.textContent = `Run #${idx + 1} (${l.Status || "COMPLETED"})${runId ? ` | ID: ${runId}` : ""}`;
+        opt.textContent = `Run #${idx + 1} | ${durStr} | ${l.Status || "COMPLETED"}${runId ? ` | ID: ${runId}` : ""}`;
         nodeRunSelect.appendChild(opt);
       });
       nodeRunSelect.value = "0";

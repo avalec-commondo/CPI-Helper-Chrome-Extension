@@ -8,11 +8,11 @@ var plugin = {
   metadataVersion: "1.0.0",
   id: "commondoDebugger",
   name: "Commondo IS Debugger",
-  version: "3.0.0",
-  author: "Commondo",
+  version: "1.0.0",
+  author: "Antonio Valec/Commondo",
   website: "https://commondo.eu",
-  email: "info@commondo.eu",
-  description: "Multi-tier iFlow trace debugger, recursive PD call-chain topology graph & trace exporter.",
+  email: "antonio.valec@commondo.eu",
+  description: "Visual multi-tier iFlow debugger with recursive ProcessDirect topology mapping, interactive step payload inspection, and full trace ZIP export.",
   settings: {},
 
   // Dedicated button in CPI-Helper sidebar panel
@@ -50,7 +50,6 @@ var plugin = {
       return container;
     },
   },
-
 
   // Script editor button
   scriptButton: {
