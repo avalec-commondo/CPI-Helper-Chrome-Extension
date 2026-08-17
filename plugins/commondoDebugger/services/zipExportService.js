@@ -5,23 +5,14 @@
 
 const CmdZipExportService = {
   /**
-   * Bounded async worker pool to limit parallel HTTP requests.
+   * Bounded async worker pool to limit parallel HTTP requests (delegates to CmdUtils).
    */
   async asyncPool(poolLimit, array, iteratorFn) {
-    const ret = [];
-    const executing = [];
-    for (const item of array) {
-      const p = Promise.resolve().then(() => iteratorFn(item, array));
-      ret.push(p);
-      if (poolLimit <= array.length) {
-        const e = p.then(() => executing.splice(executing.indexOf(e), 1));
-        executing.push(e);
-        if (executing.length >= poolLimit) {
-          await Promise.race(executing);
-        }
-      }
+    const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
+    if (utils && utils.asyncPool) {
+      return utils.asyncPool(poolLimit, array, iteratorFn);
     }
-    return Promise.all(ret);
+    return Promise.all(array.map(iteratorFn));
   },
 
   /**
@@ -105,57 +96,66 @@ const CmdZipExportService = {
       };
       flowFolder.file("log_info.json", JSON.stringify(logInfo, null, 2));
 
-      // Harvest steps for primary run
-      const primaryRun = node.runs?.[0];
-      if (primaryRun && primaryRun.MessageGuid && api) {
-        const messageGuid = primaryRun.MessageGuid;
+      // Harvest steps for all runs
+      const flowRuns = (node.runs && node.runs.length > 0) ? node.runs : [];
+      const isMultiRun = flowRuns.length > 1;
 
-        if (node.status === "FAILED" || primaryRun.Status === "FAILED" || primaryRun.Status === "ESCALATED") {
+      for (let rIdx = 0; rIdx < flowRuns.length; rIdx++) {
+        const run = flowRuns[rIdx];
+        const messageGuid = run.MessageGuid || run.Id || run.MessageId;
+        if (!messageGuid || !api) continue;
+
+        // Dedicated target folder for this run
+        const targetFolder = isMultiRun
+          ? flowFolder.folder(`Run_${String(rIdx + 1).padStart(2, "0")}`)
+          : flowFolder;
+
+        // If this specific run failed or flow is failed
+        if (run.Status === "FAILED" || run.Status === "ESCALATED" || node.status === "FAILED") {
           try {
             const errText = await api.fetchErrorInformation(messageGuid);
             if (errText) {
-              flowFolder.file("error_information.txt", errText);
-              logInfo.errorInformation = errText;
-              flowFolder.file("log_info.json", JSON.stringify(logInfo, null, 2));
+              targetFolder.file("error_information.txt", errText);
             }
           } catch (eErr) {}
         }
 
-        const runs = await api.fetchMessageRuns(messageGuid);
+        try {
+          const runs = await api.fetchMessageRuns(messageGuid);
+          if (runs && runs.length > 0) {
+            const runId = runs[0].Id;
+            const runSteps = await api.fetchRunSteps(runId);
 
-        if (runs.length > 0) {
-          const runId = runs[0].Id;
-          const runSteps = await api.fetchRunSteps(runId);
+            const stepsSummary = (runSteps || []).map((s) => ({
+              stepId: s.StepId,
+              stepName: stepNamesMap[s.StepId] || stepNamesMap[(s.StepId || "").toLowerCase()] || s.StepId,
+              activity: s.Activity,
+              status: s.Status,
+              traceCount: s.TraceCount,
+              childCount: s.ChildCount,
+            }));
+            targetFolder.file("steps_summary.json", JSON.stringify(stepsSummary, null, 2));
 
-          const stepsSummary = runSteps.map((s) => ({
-            stepId: s.StepId,
-            stepName: stepNamesMap[s.StepId] || stepNamesMap[(s.StepId || "").toLowerCase()] || s.StepId,
-            activity: s.Activity,
-            status: s.Status,
-            traceCount: s.TraceCount,
-            childCount: s.ChildCount,
-          }));
-          flowFolder.file("steps_summary.json", JSON.stringify(stepsSummary, null, 2));
+            const stepsFolder = targetFolder.folder("steps");
 
-          const stepsFolder = flowFolder.folder("steps");
+            (runSteps || []).forEach((step, sIdx) => {
+              if (step.ChildCount !== undefined) {
+                const rawStepId = step.StepId || step.ModelStepId || `Step_${sIdx + 1}`;
+                const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
+                const humanName = stepNamesMap[baseShapeId] || stepNamesMap[baseShapeId.toLowerCase()] || stepNamesMap[rawStepId];
+                const cleanName = (humanName || baseShapeId || rawStepId).replace(/[^a-zA-Z0-9_-]/g, "_");
+                const stepPrefix = `${String(step.ChildCount).padStart(3, "0")}_${cleanName}`;
 
-          runSteps.forEach((step, sIdx) => {
-            if (step.ChildCount !== undefined) {
-              const rawStepId = step.StepId || step.ModelStepId || `Step_${sIdx + 1}`;
-              const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
-              const humanName = stepNamesMap[baseShapeId] || stepNamesMap[baseShapeId.toLowerCase()] || stepNamesMap[rawStepId];
-              const cleanName = (humanName || baseShapeId || rawStepId).replace(/[^a-zA-Z0-9_-]/g, "_");
-              const stepPrefix = `${String(step.ChildCount).padStart(3, "0")}_${cleanName}`;
-
-              allStepJobs.push({
-                runId,
-                childCount: step.ChildCount,
-                stepPrefix,
-                stepsFolder,
-              });
-            }
-          });
-        }
+                allStepJobs.push({
+                  runId,
+                  childCount: step.ChildCount,
+                  stepPrefix,
+                  stepsFolder,
+                });
+              }
+            });
+          }
+        } catch (eRuns) {}
       }
     }
 

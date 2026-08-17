@@ -148,15 +148,31 @@ const CmdUtils = {
   },
 
   /**
-   * Deep clones a plain object/array safely via structured serialization.
+   * Concurrency-bounded asynchronous worker pool to limit parallel HTTP requests.
+   * Preserves execution order and caps active concurrent promises to poolLimit.
+   * @param {number} poolLimit - Max concurrent promises
+   * @param {Array} array - Input items array
+   * @param {Function} iteratorFn - Async function (item, index, array) => Promise<any>
+   * @returns {Promise<Array>} Ordered array of resolved results
    */
-  deepClone(obj) {
-    if (!obj || typeof obj !== "object") return obj;
-    try {
-      return JSON.parse(JSON.stringify(obj));
-    } catch (e) {
-      return { ...obj };
+  async asyncPool(poolLimit, array, iteratorFn) {
+    if (!Array.isArray(array) || array.length === 0) return [];
+    const limit = Math.max(1, poolLimit || 4);
+    const ret = [];
+    const executing = [];
+    for (let i = 0; i < array.length; i++) {
+      const item = array[i];
+      const p = Promise.resolve().then(() => iteratorFn(item, i, array));
+      ret.push(p);
+      if (limit <= array.length) {
+        const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+        executing.push(e);
+        if (executing.length >= limit) {
+          await Promise.race(executing);
+        }
+      }
     }
+    return Promise.all(ret);
   },
 
   // -------------------------------------------------------------------------
