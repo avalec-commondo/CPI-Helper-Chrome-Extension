@@ -460,6 +460,23 @@ const CmdDebuggerMainModal = {
       };
     }
 
+    // Diagnostic console output for each node upon opening
+    try {
+      console.group(`[Commondo Debugger] Topology Discovered for Correlation: ${corrId}`);
+      console.log(`Root Flow: %c${this.state.rootFlowId}%c | Total Nodes: ${this.state.topologyData?.nodes?.length || 1} | Total Edges: ${this.state.topologyData?.edges?.length || 0}`, "font-weight:bold;color:#0284c7;", "color:inherit;");
+      (this.state.topologyData?.nodes || []).forEach((node, idx) => {
+        const flowId = node.id;
+        const logs = this.state.logsByFlowId[flowId] || [];
+        const parentEdges = (this.state.topologyData?.edges || []).filter((e) => (e.to && e.to.toLowerCase() === flowId.toLowerCase()) || (e.target && e.target.toLowerCase() === flowId.toLowerCase()));
+        const childEdges = (this.state.topologyData?.edges || []).filter((e) => (e.from && e.from.toLowerCase() === flowId.toLowerCase()) || (e.source && e.source.toLowerCase() === flowId.toLowerCase()));
+        console.log(`  [Node #${idx + 1}] Flow: %c${flowId}%c (Level ${node.level ?? "?"}) | Runs: ${logs.length}`, "font-weight:bold;color:#059669;", "color:inherit;");
+        console.log(`    ├── Incoming Parents (${parentEdges.length}):`, parentEdges.map((e) => `${e.from || e.source} [${e.address || "ProcessDirect"}]`));
+        console.log(`    ├── Outgoing Children (${childEdges.length}):`, childEdges.map((e) => `${e.to || e.target} [${e.address || "ProcessDirect"}]`));
+        console.log(`    └── Execution Runs (${logs.length}):`, logs.map((l, i) => `Run #${i + 1} (${l.Status || "COMPLETED"}): ${l.MessageGuid || l.Id}`));
+      });
+      console.groupEnd();
+    } catch (eDiag) {}
+
     this.renderCurrentView();
   },
 

@@ -251,6 +251,159 @@ const CmdTraceService = {
 
     return activeSet;
   },
+
+  /**
+   * Scans trace ExchangeProperties for CamelExceptionCaught or CamelErrorMessage.
+   * @param {string} runId - Run ID
+   * @param {Array} steps - List of executed step objects
+   * @returns {Promise<string|null>}
+   */
+  async fetchCaughtExceptionFromTrace(runId, steps) {
+    if (!runId || !steps || steps.length === 0) return null;
+    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    if (!api) return null;
+
+    const candidateSteps = steps.slice(-6).reverse();
+    for (const step of candidateSteps) {
+      if (step.ChildCount !== undefined) {
+        try {
+          const traces = await api.fetchStepTraceMessages(runId, step.ChildCount);
+          if (traces && traces.length > 0) {
+            const traceId = traces[0].TraceId;
+            const props = await api.fetchStepExchangeProperties(traceId);
+            if (Array.isArray(props)) {
+              const excProp = props.find(
+                (p) =>
+                  p.Name === "CamelExceptionCaught" ||
+                  p.Name === "CamelErrorMessage" ||
+                  p.Name?.toLowerCase().includes("exception") ||
+                  p.Name?.toLowerCase().includes("lasterror")
+              );
+              if (excProp && excProp.Value) {
+                return String(excProp.Value).trim();
+              }
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    return null;
+  },
+
+  /**
+   * Analyzes an MPL run's execution steps and BPMN model to classify errors and caught exceptions.
+   * @param {Object} logEntry - MPL log entry
+   * @param {Array} steps - List of executed step objects
+   * @param {Object} bpmnModel - Parsed BPMN model metadata
+   * @param {string} runId - Run ID
+   * @returns {Promise<Object>} Analysis result object
+   */
+  async analyzeRunExceptions(logEntry, steps = [], bpmnModel = {}, runId = "") {
+    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    const stepNameMap = bpmnModel?.steps || {};
+    const exceptionShapes = bpmnModel?.exceptionShapes || {};
+
+    const isFailed = logEntry?.Status === "FAILED" || logEntry?.Status === "ESCALATED" || Boolean(logEntry?.LastError);
+
+    let caughtExceptionStep = null;
+    let hasExceptionSubprocessRan = false;
+    let exceptionTriggerStep = null;
+
+    if (steps && steps.length > 0) {
+      steps.forEach((s, idx) => {
+        const sid = (s.ModelStepId || (s.StepId ? s.StepId.split("#")[0] : "") || s.StepId || "").trim();
+        const act = String(s.Activity || "").toLowerCase();
+        const sName = String(stepNameMap[sid] || stepNameMap[sid.toLowerCase()] || s.StepId || "").toLowerCase();
+
+        const isErrStep = s.Status === "FAILED" || s.Status === "ERROR" || Boolean(s.ErrorMessage);
+        const isExceptionSubprocessStep =
+          exceptionShapes[sid] ||
+          exceptionShapes[sid.toLowerCase()] ||
+          act.includes("errorstart") ||
+          act.includes("exceptionsubprocess") ||
+          sName.includes("log error") ||
+          sName.includes("raise an error") ||
+          sName.includes("raise error") ||
+          sName.includes("handle error") ||
+          sName.includes("catch error") ||
+          sName.includes("on error") ||
+          sName.includes("exception subprocess") ||
+          sName.includes("error subprocess");
+
+        if (isErrStep && !caughtExceptionStep) {
+          caughtExceptionStep = s;
+        }
+
+        if (isExceptionSubprocessStep) {
+          hasExceptionSubprocessRan = true;
+          if (!exceptionTriggerStep && idx > 0) {
+            exceptionTriggerStep = steps[idx - 1];
+          }
+        }
+      });
+    }
+
+    const hasHandledException = !isFailed && (Boolean(caughtExceptionStep) || hasExceptionSubprocessRan);
+    const failedSteps = (steps || []).filter((s) => s.Status === "FAILED" || s.Status === "ERROR" || Boolean(s.ErrorMessage));
+
+    let errorInfo = logEntry?.__errorInfo || null;
+    if (!errorInfo && (isFailed || hasHandledException) && api && logEntry?.MessageGuid) {
+      try {
+        errorInfo = await api.fetchErrorInformation(logEntry.MessageGuid, runId);
+        logEntry.__errorInfo = errorInfo;
+      } catch (eErr) {}
+
+      // If OData ErrorInformation is empty for COMPLETED run, inspect trace properties
+      if (!errorInfo && hasHandledException && runId && steps && steps.length > 0) {
+        try {
+          errorInfo = await this.fetchCaughtExceptionFromTrace(runId, steps);
+          if (errorInfo) logEntry.__errorInfo = errorInfo;
+        } catch (eTr) {}
+      }
+    }
+
+    const triggerStepObj = caughtExceptionStep || exceptionTriggerStep;
+    const triggerShapeId = triggerStepObj ? (triggerStepObj.ModelStepId || triggerStepObj.StepId?.split("#")[0] || triggerStepObj.StepId) : "";
+    const triggerStepTitle = triggerStepObj ? (stepNameMap[triggerShapeId] || triggerStepObj.StepId || "a processing step") : "a processing step";
+
+    const errorText = errorInfo || logEntry?.LastError || failedSteps.map((f) => f.ErrorMessage).filter(Boolean).join("\n\n") || (hasHandledException ? "An exception occurred during execution and was caught by the Exception Subprocess." : "Execution failed.");
+
+    return {
+      isFailed,
+      hasHandledException,
+      failedSteps,
+      triggerStep: triggerStepObj,
+      triggerStepTitle,
+      hasExceptionSubprocessRan,
+      errorInfo: errorText,
+      errorSummary: errorText,
+    };
+  },
+
+  /**
+   * Fetches specific step payload data (properties, headers, body) for a given trace message.
+   * @param {string} runId - Run ID
+   * @param {number} childCount - Child Count of the step
+   * @param {string} type - 'properties' | 'headers' | 'body'
+   * @returns {Promise<any>}
+   */
+  async fetchStepPayload(runId, childCount, type) {
+    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    if (!api || !runId || childCount === undefined) return null;
+
+    const traces = await api.fetchStepTraceMessages(runId, childCount);
+    if (!traces || traces.length === 0) return null;
+
+    const traceId = traces[0].TraceId;
+    if (type === "properties") {
+      return await api.fetchStepExchangeProperties(traceId);
+    } else if (type === "headers") {
+      return await api.fetchStepHeaders(traceId);
+    } else if (type === "body") {
+      return await api.fetchStepBodyPayload(traceId, "text");
+    }
+    return null;
+  },
 };
 
 // Expose globally

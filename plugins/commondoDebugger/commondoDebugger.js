@@ -51,17 +51,6 @@ var plugin = {
     },
   },
 
-  // Script editor button
-  scriptButton: {
-    icon: { type: "icon", text: "xe0b6" },
-    title: "Commondo IS Debugger",
-    onClick: async (pluginHelper, settings) => {
-      if (typeof CmdDebuggerMainModal !== "undefined") {
-        await CmdDebuggerMainModal.openModal(null);
-      }
-    },
-  },
-
   // Heartbeat hook to synchronize header Trace IFlows button and check jump tokens
   heartbeat: async (pluginHelper, settings) => {
     if (typeof CmdHeaderTraceButton !== "undefined" && CmdHeaderTraceButton.injectButton) {

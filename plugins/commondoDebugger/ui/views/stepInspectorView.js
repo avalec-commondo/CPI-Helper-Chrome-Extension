@@ -79,63 +79,18 @@ const CmdStepInspectorView = {
       || logEntry.IntegrationFlowName
       || iFlowId;
 
-    const isFailed = logEntry.Status === "FAILED" || logEntry.Status === "ESCALATED" || Boolean(logEntry.LastError);
+    const traceService = typeof CmdTraceService !== "undefined" ? CmdTraceService : null;
+    let bpmnModel = { steps: stepNameMap, exceptionShapes: exceptionShapes, flowName: bpmnFlowName };
+    let analysis = {
+      isFailed: logEntry.Status === "FAILED" || logEntry.Status === "ESCALATED" || Boolean(logEntry.LastError),
+      hasHandledException: false,
+      failedSteps: (steps || []).filter((s) => s.Status === "FAILED" || s.Status === "ERROR" || Boolean(s.ErrorMessage)),
+      triggerStepTitle: "a processing step",
+      errorInfo: logEntry.LastError || "",
+    };
 
-    // 2. Detect Handled / Caught Exceptions (e.g. Exception Subprocess caught error while overall run is COMPLETED)
-    let caughtExceptionStep = null;
-    let hasExceptionSubprocessRan = false;
-    let exceptionTriggerStep = null;
-
-    if (steps && steps.length > 0) {
-      steps.forEach((s, idx) => {
-        const sid = (s.ModelStepId || (s.StepId ? s.StepId.split("#")[0] : "") || s.StepId || "").trim();
-        const act = String(s.Activity || "").toLowerCase();
-        const sName = String(stepNameMap[sid] || stepNameMap[sid.toLowerCase()] || s.StepId || "").toLowerCase();
-
-        const isErrStep = s.Status === "FAILED" || s.Status === "ERROR" || Boolean(s.ErrorMessage);
-        const isExceptionSubprocessStep =
-          exceptionShapes[sid] ||
-          exceptionShapes[sid.toLowerCase()] ||
-          act.includes("errorstart") ||
-          act.includes("exceptionsubprocess") ||
-          sName.includes("log error") ||
-          sName.includes("raise an error") ||
-          sName.includes("raise error") ||
-          sName.includes("handle error") ||
-          sName.includes("catch error") ||
-          sName.includes("on error") ||
-          sName.includes("exception subprocess") ||
-          sName.includes("error subprocess");
-
-        if (isErrStep) {
-          if (!caughtExceptionStep) caughtExceptionStep = s;
-        }
-
-        if (isExceptionSubprocessStep) {
-          hasExceptionSubprocessRan = true;
-          // The step right before the exception subprocess started is the trigger step
-          if (!exceptionTriggerStep && idx > 0) {
-            exceptionTriggerStep = steps[idx - 1];
-          }
-        }
-      });
-    }
-
-    const hasHandledException = !isFailed && (Boolean(caughtExceptionStep) || hasExceptionSubprocessRan);
-
-    if (!errorInfo && (isFailed || hasHandledException) && api) {
-      try {
-        errorInfo = await api.fetchErrorInformation(logEntry.MessageGuid, runId);
-        logEntry.__errorInfo = errorInfo;
-      } catch (eErr) {}
-
-      // If errorInfo not found via OData (because flow is COMPLETED), inspect trace properties for CamelExceptionCaught
-      if (!errorInfo && hasHandledException && runId && steps && steps.length > 0) {
-        try {
-          errorInfo = await this.fetchCaughtExceptionFromTrace(runId, steps);
-          if (errorInfo) logEntry.__errorInfo = errorInfo;
-        } catch (eTr) {}
-      }
+    if (traceService && traceService.analyzeRunExceptions) {
+      analysis = await traceService.analyzeRunExceptions(logEntry, steps, bpmnModel, runId);
     }
 
     const runGuid = logEntry.MessageGuid || logEntry.Id || "";
@@ -154,11 +109,11 @@ const CmdStepInspectorView = {
          </div>`
       : "";
 
-    const failedSteps = (steps || []).filter((s) => s.Status === "FAILED" || s.Status === "ERROR" || Boolean(s.ErrorMessage));
+    const failedSteps = analysis.failedSteps || [];
 
     // Red Banner for Unhandled Fatal Failure
     let errorBannerHtml = "";
-    if (isFailed && (errorInfo || logEntry.LastError || failedSteps.length > 0)) {
+    if (analysis.isFailed && (analysis.errorInfo || failedSteps.length > 0)) {
       const multiStepWarning = failedSteps.length > 1
         ? `<div style="font-size: 0.74rem; color: #7f1d1d; margin-bottom: 6px; font-weight: 600;">
              Multiple failed steps detected (${failedSteps.length} failures across branches):
@@ -182,14 +137,12 @@ const CmdStepInspectorView = {
             <button class="ui mini compact button cmd-copy-error-btn" style="padding: 3px 8px; font-size: 0.72rem; background: #fee2e2; color: #991b1b; border: 1px solid #fca5a5;">Copy Error</button>
           </div>
           ${multiStepWarning}
-          <div class="cmd-error-text" style="font-family: monospace; font-size: 0.74rem; line-height: 1.35; color: #7f1d1d; background: #ffffff; border: 1px solid #fecaca; border-radius: 4px; padding: 8px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; user-select: all;">${escapeHtml(errorInfo || logEntry.LastError || failedSteps.map(f => f.ErrorMessage).filter(Boolean).join("\n\n") || "Execution failed.")}</div>
+          <div class="cmd-error-text" style="font-family: monospace; font-size: 0.74rem; line-height: 1.35; color: #7f1d1d; background: #ffffff; border: 1px solid #fecaca; border-radius: 4px; padding: 8px; max-height: 140px; overflow-y: auto; white-space: pre-wrap; word-break: break-all; user-select: all;">${escapeHtml(analysis.errorInfo || "Execution failed.")}</div>
         </div>`;
-    } else if (hasHandledException) {
+    } else if (analysis.hasHandledException) {
       // Amber Banner for Caught / Handled Exception
-      const triggerStepObj = caughtExceptionStep || exceptionTriggerStep;
-      const triggerShapeId = triggerStepObj ? (triggerStepObj.ModelStepId || triggerStepObj.StepId?.split("#")[0] || triggerStepObj.StepId) : "";
-      const triggerStepTitle = triggerStepObj ? (stepNameMap[triggerShapeId] || triggerStepObj.StepId || "a processing step") : "a processing step";
-      const caughtMsg = errorInfo || caughtExceptionStep?.ErrorMessage || `An exception occurred during execution and was caught by the Exception Subprocess.`;
+      const triggerStepTitle = analysis.triggerStepTitle || "a processing step";
+      const caughtMsg = analysis.errorInfo || `An exception occurred during execution and was caught by the Exception Subprocess.`;
 
       const multiStepHandledWarning = failedSteps.length > 1
         ? `<div style="font-size: 0.74rem; color: #78350f; margin-bottom: 6px;">
@@ -265,6 +218,8 @@ const CmdStepInspectorView = {
 
     const stepsListDiv = container.querySelector("#cmd-steps-list-container");
 
+    const isFlowFailed = Boolean(analysis.isFailed);
+
     steps.forEach((step, idx) => {
       const rawStepId = step.StepId || step.ModelStepId || `Step_${idx + 1}`;
       const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
@@ -292,11 +247,11 @@ const CmdStepInspectorView = {
       let statusBadgeText = escapeHtml(status);
 
       if (isStepFailed) {
-        cardStyle = isFailed
+        cardStyle = isFlowFailed
           ? "border: 1px solid #f87171; border-radius: 6px; padding: 10px; background: #fff5f5; box-shadow: 0 1px 3px rgba(239,68,68,0.08);"
           : "border: 1px solid #f59e0b; border-radius: 6px; padding: 10px; background: #fffbeb; box-shadow: 0 1px 3px rgba(245,158,11,0.08);";
-        statusBadgeClass = isFailed ? "red" : "yellow";
-        statusBadgeText = isFailed ? "FAILED" : "CAUGHT ERROR";
+        statusBadgeClass = isFlowFailed ? "red" : "yellow";
+        statusBadgeText = isFlowFailed ? "FAILED" : "CAUGHT ERROR";
       }
 
       const exceptionSubprocessTag = isInsideExceptionSubprocess
@@ -304,8 +259,8 @@ const CmdStepInspectorView = {
         : "";
 
       const stepErrorMessageHtml = step.ErrorMessage
-        ? `<div style="margin-top: 6px; padding: 6px 8px; background: ${isFailed ? "#fee2e2" : "#fef3c7"}; border: 1px solid ${isFailed ? "#fca5a5" : "#fde68a"}; border-radius: 4px; font-size: 0.74rem; color: ${isFailed ? "#991b1b" : "#92400e"}; font-family: monospace; word-break: break-all;">
-             <b>${isFailed ? "Error" : "Caught Exception"}:</b> ${escapeHtml(step.ErrorMessage)}
+        ? `<div style="margin-top: 6px; padding: 6px 8px; background: ${isFlowFailed ? "#fee2e2" : "#fef3c7"}; border: 1px solid ${isFlowFailed ? "#fca5a5" : "#fde68a"}; border-radius: 4px; font-size: 0.74rem; color: ${isFlowFailed ? "#991b1b" : "#92400e"}; font-family: monospace; word-break: break-all;">
+             <b>${isFlowFailed ? "Error" : "Caught Exception"}:</b> ${escapeHtml(step.ErrorMessage)}
            </div>`
         : "";
 
@@ -338,100 +293,57 @@ const CmdStepInspectorView = {
       `;
 
       const displayBox = stepCard.querySelector(".cmd-payload-display");
+      const btnProps = stepCard.querySelector(".cmd-btn-props");
+      const btnHeaders = stepCard.querySelector(".cmd-btn-headers");
+      const btnBody = stepCard.querySelector(".cmd-btn-body");
 
-      stepCard.querySelector(".cmd-btn-props").onclick = () => this.fetchStepData(runId, childCount, "properties", displayBox);
-      stepCard.querySelector(".cmd-btn-headers").onclick = () => this.fetchStepData(runId, childCount, "headers", displayBox);
-      stepCard.querySelector(".cmd-btn-body").onclick = () => this.fetchStepData(runId, childCount, "body", displayBox);
+      if (btnProps) btnProps.onclick = () => this.fetchStepData(runId, childCount, "properties", displayBox);
+      if (btnHeaders) btnHeaders.onclick = () => this.fetchStepData(runId, childCount, "headers", displayBox);
+      if (btnBody) btnBody.onclick = () => this.fetchStepData(runId, childCount, "body", displayBox);
 
-      stepsListDiv.appendChild(stepCard);
+      if (stepsListDiv) stepsListDiv.appendChild(stepCard);
     });
   },
 
   /**
-   * Fetches single step properties, headers, or body payload.
+   * Fetches single step properties, headers, or body payload using CmdTraceService.
    */
   async fetchStepData(runId, childCount, type, container) {
     container.style.display = "block";
     container.innerHTML = `<div style="color: #94a3b8; font-size: 0.78rem; font-style: italic; padding: 6px;">Loading ${type}...</div>`;
 
-    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    const traceService = typeof CmdTraceService !== "undefined" ? CmdTraceService : null;
     const codeViewer = typeof CmdCodeViewer !== "undefined" ? CmdCodeViewer : null;
 
-    if (!api) {
-      container.innerHTML = `<div style="color: #ef4444; font-size: 0.78rem;">CmdApiClient is not available.</div>`;
+    if (!traceService || !traceService.fetchStepPayload) {
+      container.innerHTML = `<div style="color: #ef4444; font-size: 0.78rem;">CmdTraceService is not available.</div>`;
       return;
     }
 
     try {
-      const traceData = await api.fetchStepTraceMessages(runId, childCount);
-      if (!traceData || traceData.length === 0) {
+      const data = await traceService.fetchStepPayload(runId, childCount, type);
+      if (data === null || data === undefined) {
         container.innerHTML = `<div style="color: #94a3b8; font-size: 0.78rem; font-style: italic; padding: 6px; background: #0f172a; border-radius: 4px;">No trace data recorded for this step (TRACE log level was not active during this run, or payload was not captured).</div>`;
         return;
       }
 
-      traceData.sort((a, b) => Number(a.TraceId) - Number(b.TraceId));
-      const traceId = traceData[0].TraceId;
-
-      if (type === "properties") {
-        const props = await api.fetchStepExchangeProperties(traceId);
+      if (type === "properties" || type === "headers") {
+        const title = type === "properties" ? "Exchange Properties" : "Headers";
         if (codeViewer) {
-          codeViewer.renderPropertyTable(container, props, "Exchange Properties");
+          codeViewer.renderPropertyTable(container, data, title);
         } else {
-          container.innerText = JSON.stringify(props, null, 2);
-        }
-      } else if (type === "headers") {
-        const headers = await api.fetchStepHeaders(traceId);
-        if (codeViewer) {
-          codeViewer.renderPropertyTable(container, headers, "Headers");
-        } else {
-          container.innerText = JSON.stringify(headers, null, 2);
+          container.innerText = JSON.stringify(data, null, 2);
         }
       } else if (type === "body") {
-        const bodyText = await api.fetchStepBodyPayload(traceId, "text");
         if (codeViewer) {
-          codeViewer.renderViewer(container, bodyText || "(Empty Payload)", "Step Body Stream");
+          codeViewer.renderViewer(container, data || "(Empty Payload)", "Step Body Stream");
         } else {
-          container.innerText = bodyText || "(Empty Payload)";
+          container.innerText = data || "(Empty Payload)";
         }
       }
     } catch (err) {
       container.innerHTML = `<div style="color: #ef4444; font-size: 0.78rem;">Error loading ${type}: ${err.message || err}</div>`;
     }
-  },
-
-  /**
-   * Scans trace ExchangeProperties for CamelExceptionCaught or CamelErrorMessage.
-   */
-  async fetchCaughtExceptionFromTrace(runId, steps) {
-    if (!runId || !steps || steps.length === 0) return null;
-    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
-    if (!api) return null;
-
-    const candidateSteps = steps.slice(-6).reverse();
-    for (const step of candidateSteps) {
-      if (step.ChildCount !== undefined) {
-        try {
-          const traces = await api.fetchStepTraceMessages(runId, step.ChildCount);
-          if (traces && traces.length > 0) {
-            const traceId = traces[0].TraceId;
-            const props = await api.fetchStepExchangeProperties(traceId);
-            if (Array.isArray(props)) {
-              const excProp = props.find(
-                (p) =>
-                  p.Name === "CamelExceptionCaught" ||
-                  p.Name === "CamelErrorMessage" ||
-                  p.Name?.toLowerCase().includes("exception") ||
-                  p.Name?.toLowerCase().includes("lasterror")
-              );
-              if (excProp && excProp.Value) {
-                return String(excProp.Value).trim();
-              }
-            }
-          }
-        } catch (e) {}
-      }
-    }
-    return null;
   },
 };
 
