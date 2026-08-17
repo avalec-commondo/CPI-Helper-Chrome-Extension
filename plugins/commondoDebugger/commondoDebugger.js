@@ -9,11 +9,13 @@ var plugin = {
   id: "commondoDebugger",
   name: "Commondo IS Debugger",
   version: "1.0.0",
-  author: "Antonio Valec/Commondo",
+  author: "Antonio Valec / Commondo",
   website: "https://commondo.eu",
   email: "antonio.valec@commondo.eu",
   description: "Visual multi-tier iFlow debugger with recursive ProcessDirect topology mapping, interactive step payload inspection, and full trace ZIP export.",
-  settings: {},
+  settings: {
+    icon: { type: "icon", src: "/images/commondo - cloud logo.png" },
+  },
 
   // Dedicated button in CPI-Helper sidebar panel
   messageSidebarContent: {
@@ -78,7 +80,7 @@ async function checkPendingInlineTraceJump() {
     }
 
     const now = Date.now();
-    const activeFlow = (typeof cpiData !== "undefined" && cpiData.integrationFlowId) ? String(cpiData.integrationFlowId).toLowerCase().trim() : "";
+    const activeFlow = typeof cpiData !== "undefined" && cpiData.integrationFlowId ? String(cpiData.integrationFlowId).toLowerCase().trim() : "";
     const hrefDecoded = decodeURIComponent(window.location.href).toLowerCase();
 
     // Find the matching flow entry for this current tab

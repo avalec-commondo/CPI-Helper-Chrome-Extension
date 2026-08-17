@@ -197,24 +197,18 @@ const CmdTraceService = {
   },
 
   /**
-   * Synchronizes CPI Helper keep-alive Chrome Storage keys so TRACE remains active.
+   * Synchronizes CPI Helper keep-alive Chrome Storage key so TRACE remains active.
    */
   async syncStorageKeepAlive(iflowId, isActive = true) {
     if (!iflowId) return;
     const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
-    const tenant = typeof CmdApiClient !== "undefined" ? CmdApiClient.getTenantHost() : "";
-    const currentLocId = (typeof cpiData !== "undefined" && cpiData.runtimeLocationId) ? cpiData.runtimeLocationId : (tenant.replace(/[^a-zA-Z0-9]/g, "") || "cloudintegration");
-
+    const locId = (typeof cpiData !== "undefined" && cpiData.runtimeLocationId) ? cpiData.runtimeLocationId : "cloudintegration";
     const val = isActive ? Date.now().toString() : null;
 
-    const keysObj = {
-      [`${iflowId}_powertraceLastRefresh`]: val,
-      [`${iflowId}_${currentLocId}_powertraceLastRefresh`]: val,
-      [`${iflowId}_cloudintegration_powertraceLastRefresh`]: val,
-    };
+    const storageKey = `${iflowId}_${locId}_powertraceLastRefresh`;
 
     if (utils) {
-      await utils.storageSet(keysObj);
+      await utils.storageSet({ [storageKey]: val });
     }
   },
 
