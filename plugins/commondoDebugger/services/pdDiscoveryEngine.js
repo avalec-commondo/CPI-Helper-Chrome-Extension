@@ -137,8 +137,14 @@ const CmdPdDiscoveryEngine = {
     if (executedEntryFlows.length === 1) {
       effectiveRoot = executedEntryFlows[0];
     } else if (executedEntryFlows.length > 1) {
-      const withOutbounds = executedEntryFlows.find((fId) => (flowModels[fId]?.outbound || []).length > 0);
-      effectiveRoot = withOutbounds || executedEntryFlows[0];
+      if (rootFlowId && executedEntryFlows.includes(rootFlowId)) {
+        effectiveRoot = rootFlowId;
+      } else {
+        const withOutbounds = executedEntryFlows.find((fId) => (flowModels[fId]?.outbound || []).length > 0);
+        effectiveRoot = withOutbounds || executedEntryFlows[0];
+      }
+    } else if (rootFlowId && executedFlowIds.includes(rootFlowId)) {
+      effectiveRoot = rootFlowId;
     } else if (executedFlowIds.length > 0) {
       effectiveRoot = executedFlowIds[0];
     }
@@ -501,25 +507,24 @@ const CmdPdDiscoveryEngine = {
   },
 
   /**
-   * Computes topological DAG levels using BFS traversal with cycle protection.
+   * Computes topological DAG levels using BFS longest-path traversal with cycle protection.
    */
   computeDagLevels(root, edges, allNodes) {
     const nodeLevels = { [root]: 0 };
     const queue = [root];
-    const visited = new Set([root]);
+    const maxHops = (allNodes.length || 1) + 2;
 
     while (queue.length > 0) {
       const curr = queue.shift();
       const currLevel = nodeLevels[curr] || 0;
+      if (currLevel >= maxHops) continue; // Cycle protection
+
       const outEdges = edges.filter((e) => e.from === curr);
 
       outEdges.forEach((e) => {
         const nextLevel = currLevel + 1;
         if (nodeLevels[e.to] === undefined || nextLevel > nodeLevels[e.to]) {
           nodeLevels[e.to] = nextLevel;
-        }
-        if (!visited.has(e.to)) {
-          visited.add(e.to);
           queue.push(e.to);
         }
       });
