@@ -314,6 +314,7 @@ const CmdBpmnParserService = {
     const outbound = [];
     const inbound = [];
     const steps = {};
+    const exceptionShapes = {};
     let flowName = initialName;
     let flowDescription = initialDesc;
 
@@ -419,7 +420,6 @@ const CmdBpmnParserService = {
 
       // Exception Subprocesses & Error Start Events
       const subProcesses = xmlDoc.getElementsByTagNameNS("*", "subProcess");
-      const exceptionShapes = {};
 
       for (let sIdx = 0; sIdx < subProcesses.length; sIdx++) {
         const sp = subProcesses[sIdx];

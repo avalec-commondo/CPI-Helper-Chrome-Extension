@@ -8,6 +8,13 @@
 const workspaceGuidCache = new Map();
 
 const CmdApiClient = {
+  /**
+   * Clears internal workspace and artifact GUID cache.
+   */
+  clearCache() {
+    workspaceGuidCache.clear();
+  },
+
   // -------------------------------------------------------------------------
   // Platform & Environment Detection
   // -------------------------------------------------------------------------

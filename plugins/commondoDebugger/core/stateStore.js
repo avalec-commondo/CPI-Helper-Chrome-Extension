@@ -197,7 +197,9 @@ const CmdStateStore = {
     artifactNameMap.clear();
     artifactGuidMap.clear();
     artifactPackageMap.clear();
-    deployedArtifactsCache = null;
+    if (typeof CmdApiClient !== "undefined" && typeof CmdApiClient.clearCache === "function") {
+      CmdApiClient.clearCache();
+    }
 
     _state.rootFlowId = "";
     _state.packageId = "";
