@@ -335,7 +335,16 @@ const CmdDebuggerMainModal = {
 
     // Show Semantic UI Modal
     if (typeof $ !== "undefined" && typeof $(modal).modal === "function") {
-      $(modal).modal({ closable: true, observeChanges: true }).modal("show");
+      $(modal).modal({
+        closable: true,
+        observeChanges: true,
+        onHidden: () => {
+          if (CmdDebuggerMainModal.state.countdownInterval) {
+            clearInterval(CmdDebuggerMainModal.state.countdownInterval);
+            CmdDebuggerMainModal.state.countdownInterval = null;
+          }
+        },
+      }).modal("show");
     } else {
       modal.style.display = "flex";
     }
