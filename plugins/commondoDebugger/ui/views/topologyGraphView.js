@@ -226,6 +226,9 @@ const CmdTopologyGraphView = {
       <marker id="cmd-arrow-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#0284c7"/>
       </marker>
+      <marker id="cmd-arrow-down-gray" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+        <path d="M 0 0 L 10 5 L 0 10 z" fill="#64748b"/>
+      </marker>
       <marker id="cmd-arrow-hanging" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
         <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/>
       </marker>
@@ -317,6 +320,8 @@ const CmdTopologyGraphView = {
       return d;
     }
 
+    const isStaticGraph = Boolean(topologyData?.isStatic || (topologyData?.nodes || []).every((n) => n.status === "STATIC"));
+
     // 3. Draw Connecting Directional Curves (Top to Bottom) with ProcessDirect Endpoint Labels
     edgeRoutes.forEach((route) => {
       const edge = route.edge;
@@ -324,10 +329,10 @@ const CmdTopologyGraphView = {
       if (!points || points.length === 0) return;
 
       const isHangingEdge = Boolean(edge.isHangingEdge);
-      const strokeColor = isHangingEdge ? "#f59e0b" : "#0284c7";
-      const strokeWidth = isHangingEdge ? "1.4" : "2.2";
+      const strokeColor = isHangingEdge ? "#f59e0b" : (isStaticGraph ? "#64748b" : "#0284c7");
+      const strokeWidth = isHangingEdge ? "1.4" : "2.0";
       const strokeDash = isHangingEdge ? "3,3" : "none";
-      const markerEnd = isHangingEdge ? "url(#cmd-arrow-hanging)" : "url(#cmd-arrow-down)";
+      const markerEnd = isHangingEdge ? "url(#cmd-arrow-hanging)" : (isStaticGraph ? "url(#cmd-arrow-down-gray)" : "url(#cmd-arrow-down)");
 
       const pathData = pointsToSmoothPath(points);
       const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
@@ -349,12 +354,15 @@ const CmdTopologyGraphView = {
         const pillHeight = 22;
         const midX = route.labelX;
         const midY = route.labelY;
+        const pillFill = isStaticGraph ? "#f8fafc" : "#ffffff";
+        const pillStroke = isStaticGraph ? "#94a3b8" : "#0284c7";
+        const pillTextColor = isStaticGraph ? "#334155" : "#0369a1";
 
         edgeG.innerHTML = `
           <title>${escapeHtml(edge.rawAddress || edge.address)} (${escapeHtml(edge.matchType || "ProcessDirect")})</title>
           <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
-                fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
-          <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
+                fill="${pillFill}" stroke="${pillStroke}" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
+          <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="${pillTextColor}">
             ${escapeHtml(labelText)}
           </text>
         `;
@@ -435,14 +443,14 @@ const CmdTopologyGraphView = {
         };
       } else {
         const logs = logsByFlowId[flowId] || [];
-        const hasRuns = logs.length > 0;
+        const hasRuns = logs.length > 0 && !isStaticGraph;
         const latestLog = hasRuns ? logs[0] : null;
         const isSelected = selectedNodeId && selectedNodeId === flowId;
         const isRoot = node.level === 0;
 
-        // Status and Duration determination
-        let status = hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
-        let statusColor = "#94a3b8"; // Gray for no runs / unexecuted
+        // Status determination
+        let status = isStaticGraph ? "DESIGN-TIME ARTIFACT" : hasRuns ? latestLog.Status || "COMPLETED" : "NOT EXECUTED";
+        let statusColor = isStaticGraph ? "#64748b" : "#94a3b8"; // Neutral slate for static, gray for unexecuted
         if (hasRuns) {
           if (status === "COMPLETED") statusColor = "#10b981";
           else if (status === "FAILED") statusColor = "#ef4444";
@@ -473,8 +481,8 @@ const CmdTopologyGraphView = {
 
         const cachedModel = store ? store.getCachedBpmnModel(flowId) : null;
         const artName =
-          logs[0]?.IntegrationArtifact?.Name ||
-          logs[0]?.IntegrationFlowName ||
+          (!isStaticGraph && logs[0]?.IntegrationArtifact?.Name) ||
+          (!isStaticGraph && logs[0]?.IntegrationFlowName) ||
           node.displayName ||
           node.name ||
           (store ? store.getArtifactName(flowId) : "") ||
@@ -485,20 +493,26 @@ const CmdTopologyGraphView = {
         if (rawName.length > 26) rawName = rawName.substring(0, 24) + "..";
         const displayName = escapeHtml(rawName);
 
-        // Badge pill in top-right: Multi-run, Unexecuted, or Root
-        const rightBadge = !hasRuns
-          ? `<rect x="${pos.x + pos.width - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
-             <text x="${pos.x + pos.width - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">0 runs</text>`
-          : logs.length > 1
-          ? `<rect x="${pos.x + pos.width - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
-             <text x="${pos.x + pos.width - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
-          : isRoot
-          ? `<rect x="${pos.x + pos.width - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
-             <text x="${pos.x + pos.width - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
-          : "";
+        // Badge pill in top-right: Multi-run, Static, or Root
+        const rightBadge = isStaticGraph
+          ? (isRoot
+              ? `<rect x="${pos.x + pos.width - 56}" y="${pos.y + 6}" width="48" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 32}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#334155">ROOT</text>`
+              : `<rect x="${pos.x + pos.width - 58}" y="${pos.y + 6}" width="50" height="18" rx="9" fill="#f8fafc" stroke="#cbd5e1" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 33}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">STATIC</text>`)
+          : (!hasRuns
+              ? `<rect x="${pos.x + pos.width - 62}" y="${pos.y + 6}" width="54" height="18" rx="9" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 35}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#64748b">0 runs</text>`
+              : logs.length > 1
+              ? `<rect x="${pos.x + pos.width - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${logs.length} runs</text>`
+              : isRoot
+              ? `<rect x="${pos.x + pos.width - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
+                 <text x="${pos.x + pos.width - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
+              : "");
 
         let runsBreakdownText = "";
-        if (logs.length > 1) {
+        if (logs.length > 1 && !isStaticGraph) {
           runsBreakdownText = "\n\nRuns Duration Breakdown:\n" + logs.map((l, i) => {
             const parseMsFn = (dt) => {
               if (utils && utils.parseMs) return utils.parseMs(dt);
@@ -512,19 +526,28 @@ const CmdTopologyGraphView = {
           }).join("\n");
         }
 
+        const tooltipTitle = isStaticGraph
+          ? `${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}\nDesign-Time Package Architecture Node`
+          : `${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${hasRuns ? `\nTotal Duration: ${durationText} (${logs.length} run${logs.length === 1 ? "" : "s"})${runsBreakdownText}` : " (Not executed in this correlation run)"}`;
+
+        const cardFill = isStaticGraph ? (isSelected ? "#f1f5f9" : "#ffffff") : (!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff");
+        const cardStroke = isStaticGraph ? (isSelected ? "#0284c7" : isRoot ? "#64748b" : "#cbd5e1") : (!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1");
+        const cardStrokeWidth = isSelected ? "3" : isRoot ? "2" : "1.5";
+        const cardStrokeDash = (!hasRuns && !isStaticGraph) ? "4,3" : "none";
+
         nodeG.innerHTML = `
-          <title>${escapeHtml(artName)}\nTechnical ID: ${escapeHtml(flowId)}${hasRuns ? `\nTotal Duration: ${durationText} (${logs.length} run${logs.length === 1 ? "" : "s"})${runsBreakdownText}` : " (Not executed in this correlation run)"}</title>
+          <title>${tooltipTitle}</title>
           <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
-                fill="${!hasRuns ? "#f8fafc" : isSelected ? "#f0fdf4" : "#ffffff"}"
-                stroke="${!hasRuns ? "#cbd5e1" : isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
-                stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
-                stroke-dasharray="${!hasRuns ? "4,3" : "none"}"
+                fill="${cardFill}"
+                stroke="${cardStroke}"
+                stroke-width="${cardStrokeWidth}"
+                stroke-dasharray="${cardStrokeDash}"
                 filter="drop-shadow(0 2px 6px rgba(0,0,0,0.05))" />
           <rect x="${pos.x}" y="${pos.y}" width="6" height="${pos.height}" rx="3" fill="${statusColor}" />
-          <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="${!hasRuns ? "#64748b" : "#1e293b"}">
+          <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="#1e293b">
             ${displayName}
           </text>
-          <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="${!hasRuns ? "#94a3b8" : "#64748b"}">
+          <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="#64748b">
             Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(status)}</tspan>${hasRuns && durationText ? ` | <tspan font-weight="600" fill="#334155">${logs.length > 1 ? `Total: ${durationText}` : durationText}</tspan>` : ""}
           </text>
           ${rightBadge}

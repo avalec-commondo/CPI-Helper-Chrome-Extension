@@ -575,6 +575,30 @@ const CmdDebuggerMainModal = {
     }
 
     const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
+    const parentSelectorDiv = modal.querySelector("#cmd-inspector-parent-selector");
+
+    // Handle Static Design-Time Architecture Inspection
+    if (this.state.viewMode === "static" && !extraInfo?.isHanging) {
+      if (parentSelectorDiv) parentSelectorDiv.style.display = "none";
+      if (runSelectorDiv) runSelectorDiv.style.display = "none";
+
+      const flowDisplayName = (store ? store.getArtifactName(nodeId) : "") || nodeId;
+      titleElem.innerText = flowDisplayName;
+      titleElem.title = `Technical ID: ${nodeId}`;
+
+      contentDiv.innerHTML = `
+        <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #475569;">
+          <div style="font-weight: bold; font-size: 0.95rem; color: #1e293b; margin-bottom: 2px;">${escapeHtml(flowDisplayName)}</div>
+          <div style="font-size: 0.78rem; font-family: monospace; color: #64748b;">Technical ID: ${escapeHtml(nodeId)}</div>
+          <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 14px; text-align: center;">
+            Static design-time architecture node. Switch to <b>Runtime Path</b> to inspect execution traces and payloads.
+          </div>
+        </div>
+      `;
+      this.renderCurrentView();
+      return;
+    }
+
     const humanName =
       logsForNode[0]?.IntegrationArtifact?.Name ||
       logsForNode[0]?.IntegrationFlowName ||

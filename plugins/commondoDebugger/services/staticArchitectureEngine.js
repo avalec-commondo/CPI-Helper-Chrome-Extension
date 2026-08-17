@@ -154,6 +154,7 @@ const CmdStaticArchitectureEngine = {
       edges,
       levels,
       hangingNodes,
+      isStatic: true,
     };
   },
 };
