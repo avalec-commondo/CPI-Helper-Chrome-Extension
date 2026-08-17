@@ -108,11 +108,18 @@ const CmdCodeViewer = {
     const escapeHtml = utils.escapeHtml || ((s) => s || "");
 
     if (!items || items.length === 0) {
-      container.innerHTML = `<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic; padding: 6px;">No ${escapeHtml(title).toLowerCase()} recorded for this step.</div>`;
+      container.innerHTML = `<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic; padding: 6px; background: #0f172a; border-radius: 4px;">No ${escapeHtml(title).toLowerCase()} recorded for this step.</div>`;
       return;
     }
 
-    const rows = items
+    // Sort alphabetically (A-Z) by Name (case-insensitive)
+    const sortedItems = [...items].sort((a, b) => {
+      const nameA = String(a.Name || a.name || "").toLowerCase();
+      const nameB = String(b.Name || b.name || "").toLowerCase();
+      return nameA.localeCompare(nameB);
+    });
+
+    const rows = sortedItems
       .map(
         (item) => `
         <tr style="border-bottom: 1px solid #334155;">
@@ -128,7 +135,7 @@ const CmdCodeViewer = {
         <table style="width: 100%; border-collapse: collapse; text-align: left;">
           <thead>
             <tr style="background: #1e293b; border-bottom: 1px solid #334155;">
-              <th style="padding: 6px 10px; font-size: 0.72rem; color: #94a3b8; width: 40%;">Name</th>
+              <th style="padding: 6px 10px; font-size: 0.72rem; color: #94a3b8; width: 40%;">Name (${sortedItems.length})</th>
               <th style="padding: 6px 10px; font-size: 0.72rem; color: #94a3b8; width: 60%;">Value</th>
             </tr>
           </thead>

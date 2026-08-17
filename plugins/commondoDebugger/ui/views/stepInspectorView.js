@@ -297,9 +297,42 @@ const CmdStepInspectorView = {
       const btnHeaders = stepCard.querySelector(".cmd-btn-headers");
       const btnBody = stepCard.querySelector(".cmd-btn-body");
 
-      if (btnProps) btnProps.onclick = () => this.fetchStepData(runId, childCount, "properties", displayBox);
-      if (btnHeaders) btnHeaders.onclick = () => this.fetchStepData(runId, childCount, "headers", displayBox);
-      if (btnBody) btnBody.onclick = () => this.fetchStepData(runId, childCount, "body", displayBox);
+      const handleToggle = (type, btn) => {
+        const isCurrentlyOpen = displayBox.style.display === "block";
+        const currentType = stepCard.__activeType;
+
+        // Reset styling on all 3 buttons
+        [btnProps, btnHeaders, btnBody].forEach((b) => {
+          if (b) {
+            b.classList.remove("active", "primary");
+            b.style.background = "";
+            b.style.color = "";
+            b.style.borderColor = "";
+          }
+        });
+
+        if (isCurrentlyOpen && currentType === type) {
+          // Toggle Closed
+          displayBox.style.display = "none";
+          displayBox.innerHTML = "";
+          stepCard.__activeType = null;
+          return;
+        }
+
+        // Toggle Open / Switch Type
+        stepCard.__activeType = type;
+        if (btn) {
+          btn.classList.add("active", "primary");
+          btn.style.background = "#0284c7";
+          btn.style.color = "#ffffff";
+          btn.style.borderColor = "#0284c7";
+        }
+        this.fetchStepData(runId, childCount, type, displayBox);
+      };
+
+      if (btnProps) btnProps.onclick = () => handleToggle("properties", btnProps);
+      if (btnHeaders) btnHeaders.onclick = () => handleToggle("headers", btnHeaders);
+      if (btnBody) btnBody.onclick = () => handleToggle("body", btnBody);
 
       if (stepsListDiv) stepsListDiv.appendChild(stepCard);
     });
