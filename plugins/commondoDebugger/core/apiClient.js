@@ -413,17 +413,86 @@ const CmdApiClient = {
 
   async deployIntegrationArtifact(iflowId, version = "active") {
     if (!iflowId) return { ok: false, iflowId, error: "Empty iFlow ID" };
-    const path = `DeployIntegrationDesigntimeArtifact?Id='${encodeURIComponent(iflowId)}'&Version='${encodeURIComponent(version)}'`;
 
-    if (typeof makeCallPromise === "function") {
+    const isNeo = this.isNeo();
+    const tenant = this.getTenantHost() ? this.getTenantHost().split(".")[0] : (typeof cpiData !== "undefined" ? cpiData.tenantId : "");
+
+    // 1. Cloud Foundry: Direct SAP Web Modeler WebDAV DEPLOY endpoint
+    if (!isNeo) {
       try {
-        const fullUrl = this.buildUrl(path);
-        await makeCallPromise("POST", fullUrl, false, "application/json", null, true);
-        return { ok: true, iflowId };
-      } catch (eM) {}
+        const pkgId = await this.resolveCurrentPackageId(iflowId);
+        let wsGuid = pkgId ? await this.resolveWorkspaceGuid(pkgId) : "";
+        let artGuid = iflowId;
+        let symbolicName = iflowId;
+
+        if (pkgId) {
+          const arts = await this.fetchPackageArtifacts(pkgId);
+          const match = arts.find((a) => a.id === iflowId || a.name === iflowId || a.entityId === iflowId || a.rawId === iflowId);
+          if (match) {
+            artGuid = match.entityId || match.rawId || iflowId;
+            symbolicName = match.id || iflowId;
+          }
+        }
+
+        if (wsGuid && artGuid) {
+          const deployPath = `api/1.0/workspace/${encodeURIComponent(wsGuid)}/artifacts/${encodeURIComponent(artGuid)}/entities/${encodeURIComponent(artGuid)}/iflows/${encodeURIComponent(symbolicName)}?webdav=DEPLOY`;
+
+          // Execute via CPI-Helper native makeCallPromise (handles cookies, session and CSRF with null payload)
+          if (typeof makeCallPromise === "function") {
+            try {
+              const fullUrl = this.buildUrl(deployPath);
+              const mRes = await makeCallPromise("PUT", fullUrl, false, "*/*", null, true, null, false);
+              if (mRes !== undefined && mRes !== null) {
+                return { ok: true, iflowId, data: mRes };
+              }
+            } catch (eM) {}
+          }
+
+          // Direct fetch fallback with null body
+          const res = await this.request("PUT", deployPath, {
+            responseType: "text",
+            body: null,
+            headers: { "If-Match": "*", Accept: "*/*" },
+            includeCsrf: true,
+          });
+          if (res.ok) {
+            return { ok: true, iflowId, data: res.data };
+          }
+        }
+      } catch (eCf) {
+        console.warn(`[CmdApiClient] CF Workspace deploy error for ${iflowId}:`, eCf);
+      }
     }
 
-    return this.post(path, null, { responseType: "json" });
+    // 2. Neo: Direct OData Workspace Deploy Function Import (Clean 200 OK without trial calls)
+    if (this.isNeo()) {
+      const odataPath = this.buildUrl(`DeployIntegrationDesigntimeArtifact?Id='${encodeURIComponent(iflowId)}'&Version='${encodeURIComponent(version)}'`);
+
+      // Execute via CPI-Helper native makeCallPromise
+      if (typeof makeCallPromise === "function") {
+        try {
+          const oRes = await makeCallPromise("POST", odataPath, false, "application/json", null, true, null, false);
+          if (oRes !== undefined && oRes !== null) {
+            return { ok: true, iflowId, data: oRes };
+          }
+        } catch (eOdata) {
+          console.warn(`[CmdApiClient] Neo OData deploy error for ${iflowId}:`, eOdata);
+        }
+      }
+
+      // Direct fetch fallback for Neo OData
+      try {
+        const res = await this.request("POST", odataPath, {
+          responseType: "json",
+          includeCsrf: true,
+        });
+        if (res.ok) {
+          return { ok: true, iflowId, data: res.data };
+        }
+      } catch (eReq) {}
+    }
+
+    return { ok: false, iflowId, error: "Deployment failed on all routes." };
   },
 
   // -------------------------------------------------------------------------
