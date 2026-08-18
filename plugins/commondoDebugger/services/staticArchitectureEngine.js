@@ -39,27 +39,24 @@ const CmdStaticArchitectureEngine = {
       flowIds.unshift(rootFlowId);
     }
 
-    // 1. Fetch models for all package flows in parallel chunks
+    // 1. Fetch models for all package flows concurrently via 16-worker async pool
     const modelsByFlowId = {};
-    const chunkSize = 6;
     let completed = 0;
+    const poolFn = typeof CmdUtils !== "undefined" && CmdUtils.asyncPool
+      ? CmdUtils.asyncPool.bind(CmdUtils)
+      : (limit, arr, fn) => Promise.all(arr.map(fn));
 
-    for (let i = 0; i < flowIds.length; i += chunkSize) {
-      const chunk = flowIds.slice(i, i + chunkSize);
-      await Promise.all(
-        chunk.map(async (fid) => {
-          try {
-            modelsByFlowId[fid] = await bpmnService.getModel(fid, pkgId);
-          } catch (e) {
-            modelsByFlowId[fid] = { iflowId: fid, flowName: fid, outbound: [], inbound: [], steps: {}, paramMap: {} };
-          }
-          completed++;
-          if (typeof onProgress === "function") {
-            onProgress(completed, flowIds.length, fid);
-          }
-        })
-      );
-    }
+    await poolFn(16, flowIds, async (fid) => {
+      try {
+        modelsByFlowId[fid] = await bpmnService.getModel(fid, pkgId);
+      } catch (e) {
+        modelsByFlowId[fid] = { iflowId: fid, flowName: fid, outbound: [], inbound: [], steps: {}, paramMap: {} };
+      }
+      completed++;
+      if (typeof onProgress === "function") {
+        onProgress(completed, flowIds.length, fid);
+      }
+    });
 
     // 2. BFS Traversal starting from Root Flow
     const reachableFlows = new Set([rootFlowId]);

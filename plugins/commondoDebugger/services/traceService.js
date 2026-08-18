@@ -43,45 +43,37 @@ const CmdTraceService = {
       });
 
       const tracedSteps = steps.filter((s) => (s.TraceCount && parseInt(s.TraceCount, 10) > 0) || s.ChildCount !== undefined);
+      const poolFn = utils && utils.asyncPool ? utils.asyncPool.bind(utils) : (limit, arr, fn) => Promise.all(arr.map(fn));
 
-      const stepChunks = [];
-      for (let i = 0; i < tracedSteps.length; i += 6) {
-        stepChunks.push(tracedSteps.slice(i, i + 6));
-      }
+      await poolFn(16, tracedSteps, async (step) => {
+        try {
+          const traceMessages = await api.fetchStepTraceMessages(runId, step.ChildCount);
+          if (traceMessages.length > 0) {
+            const traceId = traceMessages[0].TraceId;
 
-      for (const chunk of stepChunks) {
-        await Promise.all(
-          chunk.map(async (step) => {
-            try {
-              const traceMessages = await api.fetchStepTraceMessages(runId, step.ChildCount);
-              if (traceMessages.length > 0) {
-                const traceId = traceMessages[0].TraceId;
+            const [propsData, headersData] = await Promise.all([
+              api.fetchStepExchangeProperties(traceId).catch(() => []),
+              api.fetchStepHeaders(traceId).catch(() => []),
+            ]);
 
-                const [propsData, headersData] = await Promise.all([
-                  api.fetchStepExchangeProperties(traceId),
-                  api.fetchStepHeaders(traceId),
-                ]);
+            if (Array.isArray(propsData)) {
+              propsData.forEach((p) => {
+                const k = p.Name || p.Key || p.name;
+                const v = p.Value !== undefined ? p.Value : p.value;
+                if (k) properties[k] = v;
+              });
+            }
 
-                if (Array.isArray(propsData)) {
-                  propsData.forEach((p) => {
-                    const k = p.Name || p.Key || p.name;
-                    const v = p.Value !== undefined ? p.Value : p.value;
-                    if (k) properties[k] = v;
-                  });
-                }
-
-                if (Array.isArray(headersData)) {
-                  headersData.forEach((h) => {
-                    const k = h.Name || h.Key || h.name;
-                    const v = h.Value !== undefined ? h.Value : h.value;
-                    if (k) headers[k] = v;
-                  });
-                }
-              }
-            } catch (eStep) {}
-          })
-        );
-      }
+            if (Array.isArray(headersData)) {
+              headersData.forEach((h) => {
+                const k = h.Name || h.Key || h.name;
+                const v = h.Value !== undefined ? h.Value : h.value;
+                if (k) headers[k] = v;
+              });
+            }
+          }
+        } catch (eStep) {}
+      });
     } catch (err) {
       console.warn(`[CmdTraceService] Trace harvesting error for ${messageGuid}:`, err);
     }
