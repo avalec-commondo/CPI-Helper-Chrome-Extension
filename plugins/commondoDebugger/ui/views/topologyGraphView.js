@@ -200,6 +200,14 @@ const CmdTopologyGraphView = {
       });
     }
 
+    // Save exact computed layout coordinates for export persistence
+    if (topologyData && typeof topologyData === "object") {
+      topologyData.layout = {
+        posMap: JSON.parse(JSON.stringify(posMap)),
+        edgeRoutes: JSON.parse(JSON.stringify(edgeRoutes)),
+      };
+    }
+
     // Outer Map Wrapper
     const mapWrapper = document.createElement("div");
     mapWrapper.style.cssText = "position: relative; width: 100%; height: 100%; overflow: hidden; background: #f8fafc; user-select: none; border-radius: 6px;";
@@ -563,37 +571,6 @@ const CmdTopologyGraphView = {
     });
 
     setTransform();
-  },
-
-  /**
-   * Backward-compatible call-tree renderer.
-   */
-  renderSvgColumnMap(container, logs, selectedLog, onSelectLog) {
-    const rootLog = logs && logs.length > 0 ? logs[0] : null;
-    const rootName = rootLog?.IntegrationFlowName || rootLog?.IntegrationArtifact?.Id || "Root";
-
-    const topologyData = {
-      nodes: (logs || []).map((l, i) => ({
-        id: l.IntegrationFlowName || l.IntegrationArtifact?.Id || `Flow_${i}`,
-        level: i === 0 ? 0 : 1,
-      })),
-      edges: (logs || []).slice(1).map((l) => ({
-        from: rootName,
-        to: l.IntegrationFlowName || l.IntegrationArtifact?.Id || "",
-        address: "ProcessDirect",
-      })),
-    };
-
-    const logsByFlowId = {};
-    (logs || []).forEach((l) => {
-      const id = l.IntegrationFlowName || l.IntegrationArtifact?.Id || "iFlow";
-      if (!logsByFlowId[id]) logsByFlowId[id] = [];
-      logsByFlowId[id].push(l);
-    });
-
-    this.renderDirectionalTopology(container, topologyData, logsByFlowId, selectedLog?.IntegrationFlowName || selectedLog?.IntegrationArtifact?.Id, (nodeId, logsForNode) => {
-      if (onSelectLog && logsForNode.length > 0) onSelectLog(logsForNode[0]);
-    });
   },
 };
 

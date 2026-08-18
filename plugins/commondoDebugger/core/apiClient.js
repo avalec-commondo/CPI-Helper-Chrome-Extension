@@ -327,6 +327,23 @@ const CmdApiClient = {
     return Array.isArray(data) ? data : [];
   },
 
+  async fetchRunTraceMessages(runId) {
+    if (!runId) return [];
+    try {
+      const url = `TraceMessages?$format=json&$filter=RunId eq '${encodeURIComponent(runId)}'&$expand=Properties,ExchangeProperties`;
+      const data = await this.getJson(url);
+      if (Array.isArray(data) && data.length > 0) return data;
+    } catch (e) {}
+
+    try {
+      const fallbackUrl = `TraceMessages?$format=json&$filter=RunId eq '${encodeURIComponent(runId)}'`;
+      const fbData = await this.getJson(fallbackUrl);
+      return Array.isArray(fbData) ? fbData : [];
+    } catch (e2) {
+      return [];
+    }
+  },
+
   async fetchStepTraceMessages(runId, childCount) {
     if (!runId || childCount === undefined || childCount === null) return [];
     const url = `MessageProcessingLogRunSteps(RunId='${encodeURIComponent(runId)}',ChildCount=${childCount})/TraceMessages?$format=json`;

@@ -134,6 +134,7 @@
         "images/favicons/*.png",
         "lib/semanticui/*",
         "images/*",
+        "plugins/commondoDebugger/resources/*",
         "plugins/settingsPaneResizer-inject.js",
         "docs/LICENSE"
       ],

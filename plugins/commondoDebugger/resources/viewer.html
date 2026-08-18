@@ -1,0 +1,755 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Commondo IS Debugger - Offline Trace Viewer</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; background: #0f172a; color: #1e293b; height: 100vh; display: flex; flex-direction: column; overflow: hidden; }
+    
+    /* Top Bar */
+    #header { background: #1e293b; color: #ffffff; padding: 10px 18px; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #334155; flex-shrink: 0; }
+    #header h1 { font-size: 0.95rem; font-weight: 700; color: #38bdf8; display: flex; align-items: center; gap: 8px; }
+    #header .badge { font-size: 0.75rem; background: #334155; color: #94a3b8; padding: 3px 8px; border-radius: 4px; font-family: monospace; }
+    
+    /* Main Layout */
+    #main { display: flex; flex: 1; min-height: 0; background: #f8fafc; }
+    
+    /* Left: SVG Topology Canvas */
+    #canvas-panel { flex: 13; position: relative; background: #f8fafc; border-right: 1px solid #cbd5e1; overflow: hidden; display: flex; flex-direction: column; }
+    #canvas-container { flex: 1; width: 100%; height: 100%; position: relative; cursor: grab; }
+    
+    /* Canvas Controls Toolbar */
+    .canvas-toolbar { position: absolute; top: 12px; left: 12px; z-index: 10; display: flex; gap: 4px; background: rgba(255, 255, 255, 0.95); padding: 4px; border-radius: 6px; box-shadow: 0 2px 6px rgba(0,0,0,0.12); border: 1px solid #cbd5e1; }
+    .tool-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #334155; width: 28px; height: 28px; border-radius: 4px; cursor: pointer; font-weight: bold; font-size: 0.85rem; display: flex; align-items: center; justify-content: center; }
+    .tool-btn:hover { background: #f1f5f9; color: #0284c7; }
+    
+    /* Right: Step Execution Inspector */
+    #inspector { flex: 9; min-width: 320px; max-width: 480px; display: flex; flex-direction: column; background: #ffffff; border-left: 1px solid #e2e8f0; }
+    #inspector-header { padding: 12px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
+    #inspector-title { font-size: 0.92rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    #run-select { width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; }
+    
+    /* Step List */
+    #step-list-container { flex: 1; overflow-y: auto; padding: 12px; }
+    .step-card { border: 1px solid #e2e8f0; border-radius: 6px; margin-bottom: 8px; background: #ffffff; overflow: hidden; box-shadow: 0 1px 2px rgba(0,0,0,0.03); }
+    .step-header { padding: 8px 12px; background: #f8fafc; display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid transparent; }
+    .step-card.expanded .step-header { border-bottom-color: #e2e8f0; background: #f1f5f9; }
+    .step-info { display: flex; align-items: center; gap: 6px; min-width: 0; }
+    .step-num { font-size: 0.72rem; font-weight: bold; background: #e2e8f0; color: #475569; padding: 2px 5px; border-radius: 3px; font-family: monospace; }
+    .step-name { font-size: 0.82rem; font-weight: 600; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .step-actions { display: flex; gap: 4px; flex-shrink: 0; }
+    .btn-toggle { padding: 3px 6px; font-size: 0.72rem; font-weight: 600; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; color: #475569; cursor: pointer; }
+    .btn-toggle:hover { background: #f1f5f9; }
+    .btn-toggle.active { background: #0284c7; color: #ffffff; border-color: #0284c7; }
+    
+    /* Step Drawer */
+    .step-payload-drawer { padding: 10px; display: none; background: #fafafa; }
+    .step-payload-drawer.open { display: block; }
+    
+    /* Tables & Code */
+    table.data-table { width: 100%; border-collapse: collapse; font-size: 0.75rem; background: #ffffff; border: 1px solid #e2e8f0; }
+    table.data-table th { background: #f1f5f9; padding: 6px 8px; text-align: left; border-bottom: 1px solid #cbd5e1; font-weight: 600; color: #475569; }
+    table.data-table td { padding: 6px 8px; border-bottom: 1px solid #f1f5f9; font-family: monospace; }
+    table.data-table tr:hover { background: #f8fafc; }
+    pre.code-view { background: #0f172a; color: #e2e8f0; padding: 10px; border-radius: 4px; font-family: monospace; font-size: 0.75rem; overflow-x: auto; max-height: 350px; }
+  </style>
+</head>
+<body>
+
+  <!-- Top Header Bar -->
+  <div id="header">
+    <h1>
+      <span>Commondo IS Debugger</span>
+      <span style="font-size:0.75rem; color:#94a3b8; font-weight:normal;">| Offline Trace Archive</span>
+    </h1>
+    <div style="display:flex; align-items:center; gap:12px;">
+      <span class="badge" id="corr-badge">Correlation: ...</span>
+      <button onclick="document.getElementById('file-input').click()" class="btn-toggle" style="background:#0284c7; color:#fff; border-color:#0284c7;">Open JSON File</button>
+      <input type="file" id="file-input" accept=".json" style="display:none;" onchange="loadFromFile(event)">
+    </div>
+  </div>
+
+  <!-- Main View -->
+  <div id="main">
+    <!-- Left: Interactive Topology SVG Canvas -->
+    <div id="canvas-panel">
+      <div class="canvas-toolbar">
+        <button class="tool-btn" onclick="zoomIn()" title="Zoom In">+</button>
+        <button class="tool-btn" onclick="zoomOut()" title="Zoom Out">-</button>
+        <button class="tool-btn" onclick="resetZoom()" title="Reset View">&#8635;</button>
+      </div>
+      <div id="canvas-container"></div>
+    </div>
+
+    <!-- Right: Step Execution Inspector -->
+    <div id="inspector">
+      <div id="inspector-header">
+        <div id="inspector-title">Select an iFlow on the left to inspect steps</div>
+        <div id="run-selector-container" style="display:none;">
+          <select id="run-select" onchange="onRunChanged()"></select>
+        </div>
+      </div>
+      <div id="step-list-container">
+        <div style="text-align:center; color:#94a3b8; margin-top:80px; font-size:0.88rem;">
+          Click any iFlow card on the left to inspect its execution steps and trace payloads.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Embedded Trace Data -->
+  <script id="trace-data" type="application/json">
+/* __EMBEDDED_TRACE_DATA__ */
+  </script>
+
+  <!-- Interactive Viewer Logic -->
+  <script>
+    let traceData = null;
+    let selectedFlowId = null;
+    let selectedRunIndex = 0;
+    let scale = 0.95;
+    let pointX = 30;
+    let pointY = 20;
+    let isPanning = false;
+    let startX = 0;
+    let startY = 0;
+    let gElement = null;
+
+    function init() {
+      try {
+        const el = document.getElementById("trace-data");
+        const raw = el ? el.textContent.trim() : "";
+        if (raw && !raw.includes("__EMBEDDED_TRACE_DATA__")) {
+          traceData = JSON.parse(raw);
+          renderDashboard();
+          return;
+        }
+      } catch (e) {
+        console.error("Failed to load embedded trace data:", e);
+      }
+
+      if (window.location.protocol && window.location.protocol.startsWith("http")) {
+        fetch("trace_data.json")
+          .then((res) => res.json())
+          .then((data) => {
+            traceData = data;
+            renderDashboard();
+          })
+          .catch(() => {});
+      }
+    }
+
+    function renderDashboard() {
+      if (!traceData) return;
+
+      document.getElementById("corr-badge").innerText = "Correlation: " + (traceData.correlationId || "N/A");
+      renderTopologyCanvas();
+      
+      const nodes = traceData.topology?.nodes || [];
+      if (nodes.length > 0) {
+        selectFlow(nodes[0].id);
+      }
+    }
+
+    function renderTopologyCanvas() {
+      const container = document.getElementById("canvas-container");
+      container.innerHTML = "";
+
+      const nodes = traceData.topology?.nodes || [];
+      const edges = traceData.topology?.edges || [];
+      if (nodes.length === 0) return;
+
+      const nodeWidth = 260;
+      const nodeHeight = 74;
+      const rankSpacingY = 130;
+      const nodeSpacingX = 300;
+
+      const savedLayout = traceData.topology?.layout;
+      const savedPosMap = savedLayout?.posMap;
+      const savedEdgeRoutes = savedLayout?.edgeRoutes;
+
+      let posMap = {};
+      let edgeRoutes = [];
+
+      if (savedPosMap && Object.keys(savedPosMap).length > 0) {
+        posMap = savedPosMap;
+        edgeRoutes = savedEdgeRoutes || [];
+      } else {
+        // Fallback layout calculation if no pre-computed layout saved
+        const levelMap = {};
+        nodes.forEach((n) => {
+          const lvl = n.level !== undefined ? n.level : 0;
+          if (!levelMap[lvl]) levelMap[lvl] = [];
+          levelMap[lvl].push(n);
+        });
+
+        // Add hanging nodes
+        nodes.forEach((n) => {
+          const hangings = n.hanging || [];
+          if (hangings.length === 0) return;
+          const hangingId = "hanging__" + n.id;
+          const count = hangings.length;
+          const hangingNode = {
+            id: hangingId,
+            isHanging: true,
+            callerId: n.id,
+            count: count,
+            hangings: hangings,
+            address: hangings[0].address || hangings[0].rawAddress || "Unresolved",
+            rawAddress: hangings[0].rawAddress || hangings[0].address || "Unresolved",
+            level: (n.level !== undefined ? n.level : 0) + 1,
+            width: count === 1 ? 180 : 215,
+            height: count === 1 ? 28 : Math.min(140, 24 + count * 18),
+          };
+
+          const hLvl = hangingNode.level;
+          if (!levelMap[hLvl]) levelMap[hLvl] = [];
+          levelMap[hLvl].push(hangingNode);
+        });
+
+        // Compute (X, Y) positions per rank
+        Object.keys(levelMap).sort((a, b) => Number(a) - Number(b)).forEach((lvlStr) => {
+          const lvl = Number(lvlStr);
+          const rankNodes = levelMap[lvl];
+          rankNodes.forEach((node, idx) => {
+            const w = node.width || nodeWidth;
+            const h = node.height || nodeHeight;
+            const posX = 40 + idx * nodeSpacingX;
+            const posY = 30 + lvl * rankSpacingY;
+            posMap[node.id] = { x: posX, y: posY, width: w, height: h, node };
+          });
+        });
+      }
+
+      function pointsToSmoothPath(points) {
+        if (!points || points.length < 2) return "";
+        if (points.length === 2) return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+        if (points.length === 3) return `M ${points[0].x} ${points[0].y} Q ${points[1].x} ${points[1].y}, ${points[2].x} ${points[2].y}`;
+        if (points.length === 4) return `M ${points[0].x} ${points[0].y} C ${points[1].x} ${points[1].y}, ${points[2].x} ${points[2].y}, ${points[3].x} ${points[3].y}`;
+        let d = `M ${points[0].x} ${points[0].y}`;
+        for (let i = 1; i < points.length; i++) d += ` L ${points[i].x} ${points[i].y}`;
+        return d;
+      }
+
+      // Create SVG
+      const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+      svg.setAttribute("width", "100%");
+      svg.setAttribute("height", "100%");
+      svg.style.cursor = "grab";
+
+      const defs = document.createElementNS("http://www.w3.org/2000/svg", "defs");
+      defs.innerHTML = `
+        <marker id="cmd-arrow-down" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#0284c7"/>
+        </marker>
+        <marker id="cmd-arrow-hanging" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto">
+          <path d="M 0 0 L 10 5 L 0 10 z" fill="#f59e0b"/>
+        </marker>
+      `;
+      svg.appendChild(defs);
+
+      gElement = document.createElementNS("http://www.w3.org/2000/svg", "g");
+      svg.appendChild(gElement);
+      container.appendChild(svg);
+
+      // Pan & Zoom
+      function setTransform() {
+        if (gElement) gElement.setAttribute("transform", `translate(${pointX}, ${pointY}) scale(${scale})`);
+      }
+
+      svg.onmousedown = (e) => {
+        if (e.target.closest(".node-group")) return;
+        isPanning = true;
+        startX = e.clientX - pointX;
+        startY = e.clientY - pointY;
+        svg.style.cursor = "grabbing";
+      };
+
+      window.onmousemove = (e) => {
+        if (!isPanning) return;
+        pointX = e.clientX - startX;
+        pointY = e.clientY - startY;
+        setTransform();
+      };
+
+      window.onmouseup = () => {
+        isPanning = false;
+        svg.style.cursor = "grab";
+      };
+
+      svg.onwheel = (e) => {
+        e.preventDefault();
+        const delta = e.deltaY > 0 ? -0.08 : 0.08;
+        scale = Math.min(Math.max(0.35, scale + delta), 2.5);
+        setTransform();
+      };
+
+      // Draw Edges (using exact saved routes if available)
+      if (edgeRoutes.length > 0) {
+        edgeRoutes.forEach((route) => {
+          const e = route.edge || {};
+          const points = route.points || [];
+          if (points.length === 0) return;
+
+          const isHangingEdge = Boolean(e.isHangingEdge);
+          const strokeColor = isHangingEdge ? "#f59e0b" : "#0284c7";
+          const strokeWidth = isHangingEdge ? "1.4" : "2.0";
+          const strokeDash = isHangingEdge ? "3,3" : "none";
+          const markerEnd = isHangingEdge ? "url(#cmd-arrow-hanging)" : "url(#cmd-arrow-down)";
+
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          path.setAttribute("d", pointsToSmoothPath(points));
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", strokeColor);
+          path.setAttribute("stroke-width", strokeWidth);
+          path.setAttribute("stroke-dasharray", strokeDash);
+          path.setAttribute("marker-end", markerEnd);
+          gElement.appendChild(path);
+
+          // Edge Label Pill
+          if (e.address && !isHangingEdge) {
+            let labelText = e.address;
+            if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
+            const pillWidth = Math.max(70, labelText.length * 6.8 + 18);
+            const pillHeight = 22;
+            const midX = route.labelX !== undefined ? route.labelX : points[0].x;
+            const midY = route.labelY !== undefined ? route.labelY : points[0].y;
+
+            const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            edgeG.innerHTML = `
+              <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
+                    fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
+              <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
+                ${escapeHtml(labelText)}
+              </text>
+            `;
+            gElement.appendChild(edgeG);
+          }
+        });
+      } else {
+        // Fallback edges loop
+        edges.forEach((e) => {
+          const fromPos = posMap[e.from];
+          const toPos = posMap[e.to];
+          if (!fromPos || !toPos) return;
+
+          const x1 = fromPos.x + fromPos.width / 2;
+          const y1 = fromPos.y + fromPos.height;
+          const x2 = toPos.x + toPos.width / 2;
+          const y2 = toPos.y;
+
+          const isHangingEdge = Boolean(e.isHangingEdge);
+          const strokeColor = isHangingEdge ? "#f59e0b" : "#0284c7";
+          const strokeWidth = isHangingEdge ? "1.4" : "2.0";
+          const strokeDash = isHangingEdge ? "3,3" : "none";
+          const markerEnd = isHangingEdge ? "url(#cmd-arrow-hanging)" : "url(#cmd-arrow-down)";
+
+          const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+          const midY = (y1 + y2) / 2;
+          const pathData = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
+          path.setAttribute("d", pathData);
+          path.setAttribute("fill", "none");
+          path.setAttribute("stroke", strokeColor);
+          path.setAttribute("stroke-width", strokeWidth);
+          path.setAttribute("stroke-dasharray", strokeDash);
+          path.setAttribute("marker-end", markerEnd);
+          gElement.appendChild(path);
+
+          if (e.address && !isHangingEdge) {
+            let labelText = e.address;
+            if (labelText.length > 28) labelText = labelText.substring(0, 26) + "..";
+            const pillWidth = Math.max(70, labelText.length * 6.8 + 18);
+            const pillHeight = 22;
+            const midX = (x1 + x2) / 2;
+
+            const edgeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+            edgeG.innerHTML = `
+              <rect x="${midX - pillWidth / 2}" y="${midY - pillHeight / 2}" width="${pillWidth}" height="${pillHeight}" rx="11"
+                    fill="#ffffff" stroke="#0284c7" stroke-width="1.2" filter="drop-shadow(0 1px 3px rgba(0,0,0,0.1))"/>
+              <text x="${midX}" y="${midY + 4}" text-anchor="middle" font-size="10.5px" font-weight="600" fill="#0369a1">
+                ${escapeHtml(labelText)}
+              </text>
+            `;
+            gElement.appendChild(edgeG);
+          }
+        });
+      }
+
+      // Draw Nodes
+      Object.values(posMap).forEach((pos) => {
+        const node = pos.node;
+        const flowId = node.id;
+        const isHanging = Boolean(node.isHanging);
+
+        const nodeG = document.createElementNS("http://www.w3.org/2000/svg", "g");
+        nodeG.setAttribute("class", "node-group");
+        nodeG.style.cursor = "pointer";
+
+        if (isHanging) {
+          if (node.count > 1) {
+            const subItems = (node.hangings || []).slice(0, 5);
+            let subItemsSvg = "";
+            subItems.forEach((it, idx) => {
+              let itemText = it.rawAddress || it.address || "outbound";
+              if (itemText.length > 25) itemText = itemText.substring(0, 23) + "..";
+              const itemY = pos.y + 36 + idx * 17;
+              subItemsSvg += `
+                <circle cx="${pos.x + 12}" cy="${itemY - 3.5}" r="2" fill="#f59e0b" />
+                <text x="${pos.x + 19}" y="${itemY}" font-size="8.8px" font-family="monospace, sans-serif" fill="#78350f">
+                  ${escapeHtml(itemText)}
+                </text>
+              `;
+            });
+
+            const tooltipList = (node.hangings || []).map((h, i) => `${i + 1}. ${h.rawAddress || h.address}`).join("\n");
+
+            nodeG.innerHTML = `
+              <title>Unresolved Outbounds (${node.count}):\n${escapeHtml(tooltipList)}\nCaller: ${escapeHtml(node.callerId)}</title>
+              <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
+                    fill="#fffdf5" stroke="#f59e0b" stroke-width="1.2" stroke-dasharray="3,2"
+                    filter="drop-shadow(0 1px 3px rgba(245,158,11,0.18))" />
+              <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="22" rx="8" fill="#fef3c7" />
+              <circle cx="${pos.x + 10}" cy="${pos.y + 11}" r="3" fill="#f59e0b" />
+              <text x="${pos.x + 18}" y="${pos.y + 14.5}" font-size="9.5px" font-weight="bold" fill="#92400e">
+                ${node.count} Unresolved Endpoints
+              </text>
+              <text x="${pos.x + pos.width - 8}" y="${pos.y + 14.5}" text-anchor="end" font-size="9px" font-weight="bold" fill="#d97706">&gt;</text>
+              ${subItemsSvg}
+            `;
+          } else {
+            let labelText = node.rawAddress || node.address || "Unresolved";
+            if (labelText.length > 20) labelText = labelText.substring(0, 18) + "..";
+
+            nodeG.innerHTML = `
+              <title>Unresolved Outbound: ${escapeHtml(node.rawAddress || node.address)}\nCaller: ${escapeHtml(node.callerId)} (Not executed or unmatched)</title>
+              <rect x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="14"
+                    fill="#fffdf5" stroke="#f59e0b" stroke-width="1.1" stroke-dasharray="3,2"
+                    filter="drop-shadow(0 1px 2px rgba(245,158,11,0.15))" />
+              <circle cx="${pos.x + 12}" cy="${pos.y + pos.height / 2}" r="3" fill="#f59e0b" />
+              <text x="${pos.x + 20}" y="${pos.y + pos.height / 2 + 3.5}" font-size="9.5px" font-family="monospace, sans-serif" font-weight="bold" fill="#92400e">
+                ${escapeHtml(labelText)}
+              </text>
+              <text x="${pos.x + pos.width - 10}" y="${pos.y + pos.height / 2 + 3}" text-anchor="end" font-size="9px" font-weight="bold" fill="#d97706">&gt;</text>
+            `;
+          }
+
+          nodeG.onclick = (evt) => {
+            evt.stopPropagation();
+            inspectHanging(node);
+          };
+        } else {
+          const flowRecord = traceData.flows?.[flowId] || {};
+          const runs = flowRecord.runs || [];
+          const isFailed = node.status === "FAILED";
+          const statusColor = isFailed ? "#ef4444" : "#10b981";
+          const isRoot = node.level === 0;
+          const isSelected = selectedFlowId === flowId;
+
+          const durationText = node.totalDuration ? `${node.totalDuration}ms` : "";
+
+          const rightBadge = runs.length > 1
+            ? `<rect x="${pos.x + pos.width - 66}" y="${pos.y + 6}" width="58" height="18" rx="9" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+               <text x="${pos.x + pos.width - 37}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#b45309">${runs.length} runs</text>`
+            : isRoot
+            ? `<rect x="${pos.x + pos.width - 52}" y="${pos.y + 6}" width="44" height="18" rx="9" fill="#e0f2fe" stroke="#0284c7" stroke-width="1"/>
+               <text x="${pos.x + pos.width - 30}" y="${pos.y + 19}" text-anchor="middle" font-size="10px" font-weight="bold" fill="#0369a1">ROOT</text>`
+            : "";
+
+          nodeG.innerHTML = `
+            <rect id="card_${escapeHtml(flowId)}" x="${pos.x}" y="${pos.y}" width="${pos.width}" height="${pos.height}" rx="8"
+                  fill="${isSelected ? "#f0fdf4" : "#ffffff"}"
+                  stroke="${isSelected ? "#10b981" : isRoot ? "#0284c7" : "#cbd5e1"}"
+                  stroke-width="${isSelected ? "3" : isRoot ? "2" : "1.5"}"
+                  filter="drop-shadow(0 2px 6px rgba(0,0,0,0.05))" />
+            <rect x="${pos.x}" y="${pos.y}" width="6" height="${pos.height}" rx="3" fill="${statusColor}" />
+            <text x="${pos.x + 16}" y="${pos.y + 24}" font-size="12.5px" font-weight="bold" fill="#1e293b">
+              ${escapeHtml(node.displayName || node.name || flowId)}
+            </text>
+            <text x="${pos.x + 16}" y="${pos.y + 46}" font-size="11px" fill="#64748b">
+              Status: <tspan font-weight="bold" fill="${statusColor}">${escapeHtml(node.status)}</tspan>${durationText ? ` | <tspan font-weight="600" fill="#334155">${durationText}</tspan>` : ""}
+            </text>
+            ${rightBadge}
+          `;
+
+          nodeG.onclick = (evt) => {
+            evt.stopPropagation();
+            selectFlow(flowId);
+          };
+        }
+
+        gElement.appendChild(nodeG);
+      });
+
+      setTransform();
+    }
+
+    function zoomIn() {
+      scale = Math.min(scale + 0.15, 2.5);
+      if (gElement) gElement.setAttribute("transform", `translate(${pointX}, ${pointY}) scale(${scale})`);
+    }
+
+    function zoomOut() {
+      scale = Math.max(scale - 0.15, 0.35);
+      if (gElement) gElement.setAttribute("transform", `translate(${pointX}, ${pointY}) scale(${scale})`);
+    }
+
+    function resetZoom() {
+      scale = 0.95;
+      pointX = 30;
+      pointY = 20;
+      if (gElement) gElement.setAttribute("transform", `translate(${pointX}, ${pointY}) scale(${scale})`);
+    }
+
+    function parseDateMs(d) {
+      if (!d) return null;
+      if (typeof d === "number") return d;
+      if (typeof d === "string") {
+        const m = d.match(/\/Date\((\d+)\)\//);
+        if (m) return parseInt(m[1], 10);
+        const p = Date.parse(d);
+        if (!isNaN(p)) return p;
+      }
+      return null;
+    }
+
+    function getRunDuration(r) {
+      if (!r) return 0;
+      if (r.duration !== undefined && r.duration !== null && !isNaN(Number(r.duration)) && Number(r.duration) > 0) {
+        return Number(r.duration);
+      }
+      const s = parseDateMs(r.logStart || r.LogStart);
+      const e = parseDateMs(r.logEnd || r.LogEnd);
+      if (s !== null && e !== null && e >= s) {
+        return e - s;
+      }
+      return 0;
+    }
+
+    function selectFlow(flowId) {
+      selectedFlowId = flowId;
+      selectedRunIndex = 0;
+
+      // Update card visual highlights
+      document.querySelectorAll("[id^='card_']").forEach((rect) => {
+        const id = rect.id.replace("card_", "");
+        if (id === flowId) {
+          rect.setAttribute("stroke", "#10b981");
+          rect.setAttribute("stroke-width", "3");
+          rect.setAttribute("fill", "#f0fdf4");
+        } else {
+          rect.setAttribute("stroke", "#cbd5e1");
+          rect.setAttribute("stroke-width", "1.5");
+          rect.setAttribute("fill", "#ffffff");
+        }
+      });
+
+      const flowRecord = traceData.flows?.[flowId];
+      if (!flowRecord) return;
+
+      document.getElementById("inspector-title").innerText = flowRecord.displayName || flowId;
+
+      const runs = flowRecord.runs || [];
+      const runSelectorDiv = document.getElementById("run-selector-container");
+      const runSelect = document.getElementById("run-select");
+
+      if (runs.length > 1) {
+        runSelectorDiv.style.display = "block";
+        runSelect.innerHTML = "";
+        runs.forEach((r, idx) => {
+          const opt = document.createElement("option");
+          opt.value = idx;
+          const durMs = getRunDuration(r);
+          const dur = `${durMs}ms`;
+          const details = [dur, r.status].filter(Boolean).join(" | ");
+          opt.textContent = `Run #${idx + 1} (${details})`;
+          runSelect.appendChild(opt);
+        });
+        runSelect.value = "0";
+      } else {
+        runSelectorDiv.style.display = "none";
+      }
+
+      renderSteps(runs[0]);
+    }
+
+    function onRunChanged() {
+      const idx = parseInt(document.getElementById("run-select").value, 10) || 0;
+      selectedRunIndex = idx;
+      const flowRecord = traceData.flows?.[selectedFlowId];
+      if (flowRecord && flowRecord.runs[idx]) {
+        renderSteps(flowRecord.runs[idx]);
+      }
+    }
+
+    function inspectHanging(hangingNode) {
+      const container = document.getElementById("step-list-container");
+      const count = hangingNode.count || (hangingNode.hangings ? hangingNode.hangings.length : 1);
+      document.getElementById("inspector-title").innerText = `Unresolved: ${count} Outbound${count === 1 ? "" : "s"}`;
+      document.getElementById("run-selector-container").style.display = "none";
+
+      const list = hangingNode.hangings || [hangingNode];
+      const itemsHtml = list.map((it, idx) => `
+        <div style="margin-top: 8px; padding: 10px; background: #ffffff; border: 1px solid #fed7aa; border-radius: 6px; box-shadow: 0 1px 3px rgba(0,0,0,0.02);">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
+            <div style="font-size: 0.85rem; font-family: monospace; font-weight: bold; color: #9a3412;">#${idx + 1}: ${escapeHtml(it.address || it.rawAddress || it.raw || "Unresolved")}</div>
+            <span style="font-size: 0.7rem; background: #fef3c7; color: #92400e; padding: 2px 6px; border-radius: 4px; font-weight: 600;">Unresolved</span>
+          </div>
+          <div style="font-size: 0.76rem; color: #64748b; margin-top: 4px;">Channel: <span style="font-family:monospace; color:#334155;">${escapeHtml(it.channelName || "ProcessDirect")}</span></div>
+        </div>
+      `).join("");
+
+      container.innerHTML = `
+        <div style="padding: 16px; background: #fffdf5; border: 1px solid #fef08a; border-radius: 8px; color: #854d0e; box-shadow: 0 1px 4px rgba(0,0,0,0.03);">
+          <div style="font-weight: bold; font-size: 0.95rem; margin-bottom: 6px; color:#78350f;">Unresolved ProcessDirect Endpoint(s)</div>
+          <div style="font-size: 0.82rem; color: #713f12; margin-bottom: 4px;">Caller Flow: <b style="font-family:monospace;">${escapeHtml(hangingNode.callerId || "Unknown")}</b></div>
+          <div style="font-size: 0.78rem; color: #a16207; line-height: 1.4;">These endpoints were invoked by the caller flow, but no matching receiver flow was executed in this correlation.</div>
+          <div style="margin-top: 12px;">${itemsHtml}</div>
+        </div>`;
+    }
+
+    function renderSteps(runRecord) {
+      const container = document.getElementById("step-list-container");
+      container.innerHTML = "";
+
+      if (!runRecord || !runRecord.steps || runRecord.steps.length === 0) {
+        container.innerHTML = `<div style="text-align:center; color:#94a3b8; margin-top:80px;">No steps recorded for this run.</div>`;
+        return;
+      }
+
+      // 1. Run Time and Summary Box
+      const durMs = getRunDuration(runRecord);
+      const durStr = `${durMs}ms`;
+
+      const runSummaryBox = document.createElement("div");
+      runSummaryBox.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:10px; font-size:0.78rem; color:#475569;";
+      runSummaryBox.innerHTML = `
+        <div>
+          <span style="font-weight:700; color:#1e293b;">Run #${(selectedRunIndex || 0) + 1}</span>
+        </div>
+        <div style="display:flex; align-items:center; gap:8px;">
+          <span style="font-weight:bold; color:#0284c7; font-family:monospace;">${durStr}</span>
+          <span style="background:${runRecord.status === 'FAILED' ? '#fee2e2' : '#dcfce7'}; color:${runRecord.status === 'FAILED' ? '#991b1b' : '#166534'}; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold;">${escapeHtml(runRecord.status || 'COMPLETED')}</span>
+        </div>
+      `;
+      container.appendChild(runSummaryBox);
+
+      // 2. Error Information (if present)
+      if (runRecord.errorInformation) {
+        const errBox = document.createElement("div");
+        errBox.style = "padding:12px; background:#fef2f2; border:1px solid #fecaca; border-radius:6px; margin-bottom:12px; color:#991b1b; font-size:0.8rem; font-family:monospace;";
+        errBox.innerText = runRecord.errorInformation;
+        container.appendChild(errBox);
+      }
+
+      // 3. Sort steps in ascending order 1 to N
+      const sortedSteps = [...(runRecord.steps || [])].sort((a, b) => {
+        const numA = Number(a.childCount) || 0;
+        const numB = Number(b.childCount) || 0;
+        return numA - numB;
+      });
+
+      sortedSteps.forEach((st, idx) => {
+        const card = document.createElement("div");
+        card.className = "step-card";
+
+        const hasProps = st.properties && st.properties.length > 0;
+        const hasHeaders = st.headers && st.headers.length > 0;
+        const hasBody = Boolean(st.body);
+
+        card.innerHTML = `
+          <div class="step-header">
+            <div class="step-info">
+              <span class="step-num">#${st.childCount || idx + 1}</span>
+              <span class="step-name">${escapeHtml(st.stepName || st.stepId)}</span>
+            </div>
+            <div class="step-actions">
+              ${hasProps ? `<button class="btn-toggle" onclick="togglePayload(this, 'props_${idx}')">Properties (${st.properties.length})</button>` : ""}
+              ${hasHeaders ? `<button class="btn-toggle" onclick="togglePayload(this, 'headers_${idx}')">Headers (${st.headers.length})</button>` : ""}
+              ${hasBody ? `<button class="btn-toggle" onclick="togglePayload(this, 'body_${idx}')">Body</button>` : ""}
+            </div>
+          </div>
+          <div id="drawer_${idx}" class="step-payload-drawer"></div>
+        `;
+
+        // Store step payload data in card element
+        card.__stepData = st;
+        card.__stepIdx = idx;
+
+        container.appendChild(card);
+      });
+    }
+
+    function togglePayload(btn, typeWithIdx) {
+      const [type, idxStr] = typeWithIdx.split("_");
+      const idx = parseInt(idxStr, 10);
+      const drawer = document.getElementById("drawer_" + idx);
+      const card = drawer.closest(".step-card");
+      const st = card.__stepData;
+
+      const isActive = btn.classList.contains("active");
+
+      card.querySelectorAll(".btn-toggle").forEach((b) => b.classList.remove("active"));
+      drawer.innerHTML = "";
+
+      if (isActive) {
+        drawer.classList.remove("open");
+        card.classList.remove("expanded");
+        return;
+      }
+
+      btn.classList.add("active");
+      drawer.classList.add("open");
+      card.classList.add("expanded");
+
+      if (type === "props") {
+        const sorted = [...(st.properties || [])].sort((a, b) => String(a.Name).localeCompare(String(b.Name)));
+        drawer.innerHTML = renderTable(sorted);
+      } else if (type === "headers") {
+        const sorted = [...(st.headers || [])].sort((a, b) => String(a.Name).localeCompare(String(b.Name)));
+        drawer.innerHTML = renderTable(sorted);
+      } else if (type === "body") {
+        const bodyContent = typeof st.body === "object" ? JSON.stringify(st.body, null, 2) : (st.body || "(Empty Body)");
+        drawer.innerHTML = `<pre class="code-view">${escapeHtml(bodyContent)}</pre>`;
+      }
+    }
+
+    function renderTable(items) {
+      if (!items || items.length === 0) return "<div style='color:#94a3b8;'>No entries.</div>";
+      let html = `<table class="data-table"><thead><tr><th style="width:35%;">Name</th><th>Value</th></tr></thead><tbody>`;
+      items.forEach((it) => {
+        html += `<tr><td style="font-weight:bold; color:#0f172a;">${escapeHtml(it.Name || it.name)}</td><td style="word-break:break-all;">${escapeHtml(it.Value || it.value)}</td></tr>`;
+      });
+      html += `</tbody></table>`;
+      return html;
+    }
+
+    function loadFromFile(evt) {
+      const file = evt.target.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = (e) => {
+        try {
+          traceData = JSON.parse(e.target.result);
+          renderDashboard();
+        } catch (err) {
+          alert("Invalid JSON trace file: " + err.message);
+        }
+      };
+      reader.readAsText(file);
+    }
+
+    function escapeHtml(s) {
+      return String(s || "")
+        .replace(/&/g, "&amp;")
+        .replace(/</g, "&lt;")
+        .replace(/>/g, "&gt;")
+        .replace(/"/g, "&quot;")
+        .replace(/'/g, "&#039;");
+    }
+
+    window.onload = init;
+  </script>
+</body>
+</html>

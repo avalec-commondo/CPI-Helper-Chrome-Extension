@@ -575,11 +575,9 @@ const CmdDebuggerMainModal = {
     }
 
     const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
-    const parentSelectorDiv = modal.querySelector("#cmd-inspector-parent-selector");
 
     // Handle Static Design-Time Architecture Inspection
     if (this.state.viewMode === "static" && !extraInfo?.isHanging) {
-      if (parentSelectorDiv) parentSelectorDiv.style.display = "none";
       if (runSelectorDiv) runSelectorDiv.style.display = "none";
 
       const flowDisplayName = (store ? store.getArtifactName(nodeId) : "") || nodeId;

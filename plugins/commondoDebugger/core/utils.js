@@ -165,7 +165,10 @@ const CmdUtils = {
       const p = Promise.resolve().then(() => iteratorFn(item, i, array));
       ret.push(p);
       if (limit <= array.length) {
-        const e = p.then(() => executing.splice(executing.indexOf(e), 1));
+        const e = p.finally(() => {
+          const idx = executing.indexOf(e);
+          if (idx !== -1) executing.splice(idx, 1);
+        });
         executing.push(e);
         if (executing.length >= limit) {
           await Promise.race(executing);
