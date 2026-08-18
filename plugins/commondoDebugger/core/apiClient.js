@@ -23,8 +23,8 @@ const CmdApiClient = {
     if (typeof cpiData !== "undefined" && cpiData.cpiPlatform) {
       return cpiData.cpiPlatform;
     }
-    const host = window.location.host;
-    const path = window.location.pathname;
+    const host = typeof window !== "undefined" && window.location ? window.location.host : "";
+    const path = typeof window !== "undefined" && window.location ? window.location.pathname : "";
     if (host.includes("-tmn.hci.") || host.includes(".hci.") || (path.startsWith("/itspaces") && !host.includes("cfapps") && !host.includes("integrationsuite"))) {
       return "neo";
     }
@@ -43,7 +43,10 @@ const CmdApiClient = {
     if (typeof cpiData !== "undefined" && cpiData.tenant) {
       return cpiData.tenant;
     }
-    return window.location.host;
+    if (typeof window !== "undefined" && window.location) {
+      return window.location.host;
+    }
+    return "";
   },
 
   getUrlExtension() {
@@ -406,6 +409,21 @@ const CmdApiClient = {
       nodeType: "IFLMAP",
     };
     return this.post(cmdUrl, body, { responseType: "text" });
+  },
+
+  async deployIntegrationArtifact(iflowId, version = "active") {
+    if (!iflowId) return { ok: false, iflowId, error: "Empty iFlow ID" };
+    const path = `DeployIntegrationDesigntimeArtifact?Id='${encodeURIComponent(iflowId)}'&Version='${encodeURIComponent(version)}'`;
+
+    if (typeof makeCallPromise === "function") {
+      try {
+        const fullUrl = this.buildUrl(path);
+        await makeCallPromise("POST", fullUrl, false, "application/json", null, true);
+        return { ok: true, iflowId };
+      } catch (eM) {}
+    }
+
+    return this.post(path, null, { responseType: "json" });
   },
 
   // -------------------------------------------------------------------------

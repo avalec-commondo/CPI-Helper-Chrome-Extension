@@ -43,6 +43,14 @@ const CmdStateStore = {
     return _state[key];
   },
 
+  getCorrelationId() {
+    return _state.correlationId || "";
+  },
+
+  setCorrelationId(id) {
+    this.set("correlationId", id);
+  },
+
   set(keyOrUpdates = {}, value = undefined) {
     const updates = typeof keyOrUpdates === "string" ? { [keyOrUpdates]: value } : keyOrUpdates || {};
     let changed = false;

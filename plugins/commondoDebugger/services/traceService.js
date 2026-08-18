@@ -197,18 +197,59 @@ const CmdTraceService = {
   },
 
   /**
+   * Triggers deployment of a specific design-time integration flow to runtime.
+   */
+  async deployFlow(iflowId, flowDisplayName = null) {
+    if (!iflowId) return { ok: false, error: "Empty iFlow ID" };
+    const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    const name = flowDisplayName || iflowId;
+
+    if (!api || !api.deployIntegrationArtifact) {
+      if (typeof showToast === "function") {
+        showToast(`Deploy API client unavailable.`, "Deploy", "error");
+      }
+      return { ok: false, error: "API client unavailable" };
+    }
+
+    try {
+      const res = await api.deployIntegrationArtifact(iflowId);
+      if (res.ok) {
+        if (typeof showToast === "function") {
+          showToast(`Deployment triggered for "${name}".`, "Deploy", "success");
+        }
+        return { ok: true, iflowId, res };
+      } else {
+        const errMsg = res.statusText || (typeof res.data === "string" ? res.data : "Unknown error");
+        if (typeof showToast === "function") {
+          showToast(`Failed to deploy "${name}": ${errMsg}`, "Deploy", "error");
+        }
+        return { ok: false, iflowId, error: errMsg };
+      }
+    } catch (err) {
+      if (typeof showToast === "function") {
+        showToast(`Error deploying "${name}": ${err.message}`, "Deploy", "error");
+      }
+      return { ok: false, iflowId, error: err.message };
+    }
+  },
+
+  /**
    * Synchronizes CPI Helper keep-alive Chrome Storage key so TRACE remains active.
    */
   async syncStorageKeepAlive(iflowId, isActive = true) {
     if (!iflowId) return;
     const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
     const locId = (typeof cpiData !== "undefined" && cpiData.runtimeLocationId) ? cpiData.runtimeLocationId : "cloudintegration";
-    const val = isActive ? Date.now().toString() : null;
 
     const storageKey = `${iflowId}_${locId}_powertraceLastRefresh`;
 
     if (utils) {
-      await utils.storageSet({ [storageKey]: val });
+      if (isActive) {
+        await utils.storageSet({ [storageKey]: Date.now().toString() });
+      } else {
+        await utils.storageRemove([storageKey, `${iflowId}_cloudintegration_powertraceLastRefresh`, `${iflowId}_powertraceLastRefresh`]);
+        await utils.storageSet({ [storageKey]: null });
+      }
     }
   },
 
@@ -227,21 +268,36 @@ const CmdTraceService = {
 
       const now = Date.now();
       const tenMins = 10 * 60 * 1000;
+      const knownLocations = ["cloudintegration", "undefined"];
+      if (typeof cpiData !== "undefined" && cpiData.runtimeLocationId) {
+        knownLocations.unshift(cpiData.runtimeLocationId);
+      }
 
       Object.keys(storageItems).forEach((k) => {
-        if (k.includes("powertraceLastRefresh")) {
-          const ts = Number(storageItems[k]);
-          if (ts && now - ts < tenMins) {
-            const prefix = k.split("_powertraceLastRefresh")[0];
+        if (k.endsWith("_powertraceLastRefresh")) {
+          const rawVal = storageItems[k];
+          if (!rawVal) return;
+          const ts = Number(rawVal);
+          if (ts && !isNaN(ts) && (now - ts) < tenMins) {
+            let prefix = k.slice(0, -"_powertraceLastRefresh".length);
+            for (const loc of knownLocations) {
+              if (loc && prefix.endsWith("_" + loc)) {
+                prefix = prefix.slice(0, -(loc.length + 1));
+                break;
+              }
+            }
             if (prefix) {
               activeSet.add(prefix);
-              const clean = prefix.replace(/_(cloudintegration|undefined|[a-zA-Z0-9_-]+)$/, "");
-              if (clean) activeSet.add(clean);
+              activeSet.add(prefix.toLowerCase());
+              const norm = utils.normalizeFlowId ? utils.normalizeFlowId(prefix) : "";
+              if (norm) activeSet.add(norm);
             }
           }
         }
       });
-    } catch (e) {}
+    } catch (e) {
+      console.warn("[CmdTraceService] getActiveTracedFlowsFromStorage failed:", e);
+    }
 
     return activeSet;
   },

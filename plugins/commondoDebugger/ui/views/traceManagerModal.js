@@ -172,22 +172,35 @@ const CmdTraceManagerModal = {
       filtered.forEach((art) => {
         const isChecked = savedChecked.has(art.id);
         const isCurrent = art.id === activeIFlow;
-        const isTraceActive = activeTraceFlows.has(art.id) || activeTraceFlows.has(art.name);
+        const normId = utils.normalizeFlowId ? utils.normalizeFlowId(art.id) : "";
+        const normName = utils.normalizeFlowId ? utils.normalizeFlowId(art.name) : "";
+        const isTraceActive =
+          activeTraceFlows.has(art.id) ||
+          activeTraceFlows.has(art.name) ||
+          activeTraceFlows.has(art.id.toLowerCase()) ||
+          (art.name && activeTraceFlows.has(art.name.toLowerCase())) ||
+          (normId && activeTraceFlows.has(normId)) ||
+          (normName && activeTraceFlows.has(normName));
 
         html += `
           <label style="display: flex; align-items: center; gap: 10px; padding: 6px 8px; border-bottom: 1px solid #eee; cursor: pointer; background: ${isChecked ? "#eaf2fd" : "#fff"}; border-radius: 4px; margin-bottom: 2px;">
             <input type="checkbox" class="cmd-flow-checkbox" data-iflow-id="${escapeHtml(art.id)}" ${isChecked ? "checked" : ""} style="cursor: pointer;" />
-            <div style="flex: 1; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between;">
+            <div style="flex: 1; font-size: 0.85rem; display: flex; align-items: center; justify-content: space-between; gap: 8px;">
               <div style="display: flex; align-items: center; gap: 6px; flex-wrap: wrap;">
                 <b style="color: ${isCurrent ? "#0070f3" : "#333"};">${escapeHtml(art.name)}</b>
                 ${art.name !== art.id ? `<span style="color: #777; font-size: 0.75rem;">(${escapeHtml(art.id)})</span>` : ""}
                 ${isCurrent ? `<span style="background: #0070f3; color: #fff; font-size: 0.7rem; padding: 1px 5px; border-radius: 3px;">Current</span>` : ""}
               </div>
-              ${isTraceActive ? `
-                <span title="TRACE is active on this flow" style="display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 10px; padding: 2px 7px; font-size: 0.72rem; font-weight: bold; color: #065f46; white-space: nowrap;">
-                  <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 4px #10b981;"></span> TRACE
-                </span>
-              ` : ""}
+              <div style="display: flex; align-items: center; gap: 6px; flex-shrink: 0;">
+                ${isTraceActive ? `
+                  <span title="TRACE is active on this flow" style="display: inline-flex; align-items: center; gap: 4px; background: #ecfdf5; border: 1px solid #10b981; border-radius: 10px; padding: 2px 7px; font-size: 0.72rem; font-weight: bold; color: #065f46; white-space: nowrap;">
+                    <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #10b981; box-shadow: 0 0 4px #10b981;"></span> TRACE
+                  </span>
+                ` : ""}
+                <button class="cmd-row-btn cmd-row-deploy" data-iflow-id="${escapeHtml(art.id)}" data-iflow-name="${escapeHtml(art.name)}" title="Deploy this flow to runtime" style="padding: 2px 8px; font-size: 0.72rem; font-weight: 600; border-radius: 4px; border: 1px solid #0070f3; background: #ffffff; color: #0070f3; cursor: pointer;">
+                  Deploy
+                </button>
+              </div>
             </div>
           </label>
         `;
@@ -206,6 +219,25 @@ const CmdTraceManagerModal = {
             cb.closest("label").style.backgroundColor = "#fff";
           }
           updateCount();
+        };
+      });
+
+      listDiv.querySelectorAll(".cmd-row-deploy").forEach((btn) => {
+        btn.onclick = async (e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          const id = btn.getAttribute("data-iflow-id");
+          const name = btn.getAttribute("data-iflow-name") || id;
+          btn.innerText = "Deploying...";
+          btn.disabled = true;
+          try {
+            if (traceService.deployFlow) {
+              await traceService.deployFlow(id, name);
+            }
+          } finally {
+            btn.innerText = "Deploy";
+            btn.disabled = false;
+          }
         };
       });
 
