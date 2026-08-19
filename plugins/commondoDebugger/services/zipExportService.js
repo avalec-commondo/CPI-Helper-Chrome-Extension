@@ -158,27 +158,7 @@ const CmdZipExportService = {
             if (runs && runs.length > 0) {
               const runId = runs[0].Id;
 
-              // Batch fetch run steps and all trace messages for this run in parallel
-              const [runSteps, runTraceMessages] = await Promise.all([
-                api.fetchRunSteps(runId).catch(() => []),
-                typeof api.fetchRunTraceMessages === "function"
-                  ? api.fetchRunTraceMessages(runId).catch(() => [])
-                  : [],
-              ]);
-
-              // Build fast lookup map for trace messages in this run (O(1) lookup per step)
-              const runTraceMap = new Map();
-              (runTraceMessages || []).forEach((tm) => {
-                if (tm.ChildCount !== undefined && tm.TraceId) {
-                  const exProps = tm.ExchangeProperties?.results || (Array.isArray(tm.ExchangeProperties) ? tm.ExchangeProperties : null);
-                  const hdrs = tm.Properties?.results || (Array.isArray(tm.Properties) ? tm.Properties : null);
-                  runTraceMap.set(Number(tm.ChildCount), {
-                    traceId: tm.TraceId,
-                    prefetchedProperties: exProps || null,
-                    prefetchedHeaders: hdrs || null,
-                  });
-                }
-              });
+              const runSteps = await api.fetchRunSteps(runId).catch(() => []);
 
               (runSteps || []).forEach((step, sIdx) => {
                 if (step.ChildCount !== undefined) {
@@ -186,7 +166,6 @@ const CmdZipExportService = {
                   const baseShapeId = (step.ModelStepId || (step.StepId ? step.StepId.split("#")[0] : "") || "").trim();
                   const humanName = stepNamesMap[baseShapeId] || stepNamesMap[baseShapeId.toLowerCase()] || stepNamesMap[rawStepId];
                   const traceCount = step.TraceCount !== undefined && step.TraceCount !== null ? Number(step.TraceCount) : null;
-                  const traceInfo = runTraceMap.get(Number(step.ChildCount));
 
                   const stepRecord = {
                     childCount: step.ChildCount,
@@ -203,13 +182,10 @@ const CmdZipExportService = {
                   runRecord.steps.push(stepRecord);
 
                   // Only queue for downloading if trace is present or unknown
-                  if (traceCount === null || traceCount > 0 || traceInfo) {
+                  if (traceCount === null || traceCount > 0) {
                     allStepJobs.push({
                       runId,
                       childCount: step.ChildCount,
-                      preResolvedTraceId: traceInfo?.traceId || null,
-                      prefetchedProperties: traceInfo?.prefetchedProperties || null,
-                      prefetchedHeaders: traceInfo?.prefetchedHeaders || null,
                       stepRef: stepRecord,
                     });
                   }
@@ -232,44 +208,59 @@ const CmdZipExportService = {
     const totalSteps = allStepJobs.length;
     let completedSteps = 0;
 
+    // Regex matching sensitive key names (exchange properties and HTTP headers)
+    const SECRET_KEY_REGEX = /^(?:.*auth.*|.*cookie.*|.*csrf.*|.*bearer.*|.*token.*|.*secret.*|.*password.*|.*passwd.*|.*credential.*|.*api[_-]?key.*|.*access[_-]?key.*|.*private[_-]?key.*|.*client[_-]?secret.*|.*passport.*|.*x-sap-logon-ticket.*|.*sap-usercontext.*)$/i;
+    const REDACTED = "[REDACTED BY COMMONDO DEBUGGER]";
+
+    function scrubProperties(arr) {
+      if (!Array.isArray(arr)) return arr;
+      return arr.map((p) => {
+        const k = String(p?.Name || p?.name || p?.Key || p?.key || "");
+        return SECRET_KEY_REGEX.test(k) ? { ...p, Value: REDACTED, value: REDACTED } : p;
+      });
+    }
+
+    function scrubHeaders(arr) {
+      if (!Array.isArray(arr)) return arr;
+      return arr.map((h) => {
+        const k = String(h?.Name || h?.name || "");
+        return SECRET_KEY_REGEX.test(k) ? { ...h, Value: REDACTED, value: REDACTED } : h;
+      });
+    }
+
+    function scrubBody(body) {
+      if (typeof body !== "string" || body.length === 0) return body;
+      // Truncate first so regex runs on bounded input
+      let s = body.length > MAX_PAYLOAD_CHARS
+        ? body.substring(0, MAX_PAYLOAD_CHARS) + `\n\n--- [Payload truncated: exceeded 2MB limit. Full payload available in SAP CPI Message Monitor] ---`
+        : body;
+      // JSON key:value patterns  e.g. "password": "secret123" or 'token':'abc'
+      s = s.replace(/(["']?(?:password|passwd|secret|api[_-]?key|access[_-]?key|client[_-]?secret|token|bearer|authorization|credential|private[_-]?key)["']?\s*:\s*)["'](?:[^"'\\]|\\.)*["']/gi, `$1"${REDACTED}"`);
+      // URL query-string patterns  e.g. ?password=abc&
+      s = s.replace(/((?:^|[?&])(?:password|passwd|secret|api[_-]?key|access[_-]?key|client[_-]?secret|token|bearer)=)[^&\s]*/gim, `$1${REDACTED}`);
+      // XML tag patterns  e.g. <Password>secret</Password>  (with optional namespace)
+      s = s.replace(/<((?:[\w-]+:)?(?:password|passwd|secret|api[_-]?key|access[_-]?key|client[_-]?secret|token|bearer|credential))(\s[^>]*)?>[\s\S]*?<\/\1>/gi, `<$1$2>${REDACTED}</$1>`);
+      return s;
+    }
+
     if (totalSteps > 0 && api) {
       reportProgress(0, totalSteps, `Downloading step traces (0/${totalSteps})...`);
 
       await this.asyncPool(24, allStepJobs, async (job) => {
         try {
-          let traceId = job.preResolvedTraceId;
-
-          // If not already resolved in batch, fetch trace message for this step
-          if (!traceId) {
-            const traceMessages = await api.fetchStepTraceMessages(job.runId, job.childCount);
-            if (traceMessages && traceMessages.length > 0) {
-              traceId = traceMessages[0].TraceId;
-            }
-          }
+          const traceMessages = await api.fetchStepTraceMessages(job.runId, job.childCount);
+          const traceId = traceMessages && traceMessages.length > 0 ? traceMessages[0].TraceId : null;
 
           if (traceId) {
-            const propsPromise = job.prefetchedProperties
-              ? Promise.resolve(job.prefetchedProperties)
-              : api.fetchStepExchangeProperties(traceId).catch(() => []);
+            const [props, headers, rawBody] = await Promise.all([
+              api.fetchStepExchangeProperties(traceId).catch(() => []),
+              api.fetchStepHeaders(traceId).catch(() => []),
+              api.fetchStepBodyPayload(traceId, "text").catch((e) => `[Payload read error: ${e?.message || e}]`),
+            ]);
 
-            const headersPromise = job.prefetchedHeaders
-              ? Promise.resolve(job.prefetchedHeaders)
-              : api.fetchStepHeaders(traceId).catch(() => []);
-
-            const bodyPromise = api.fetchStepBodyPayload(traceId, "text").catch((e) => `[Payload read error: ${e?.message || e}]`);
-
-            const [props, headers, rawBody] = await Promise.all([propsPromise, headersPromise, bodyPromise]);
-
-            job.stepRef.properties = props || [];
-            job.stepRef.headers = headers || [];
-
-            let safeBody = rawBody || "";
-            if (typeof safeBody === "string" && safeBody.length > MAX_PAYLOAD_CHARS) {
-              const originalMb = (safeBody.length / (1024 * 1024)).toFixed(2);
-              safeBody = safeBody.substring(0, MAX_PAYLOAD_CHARS) +
-                `\n\n--- [Payload truncated by Commondo IS Debugger: size exceeded 2MB limit (Original: ${originalMb} MB). Full payload available in SAP CPI Message Monitor] ---`;
-            }
-            job.stepRef.body = safeBody;
+            job.stepRef.properties = scrubProperties(props || []);
+            job.stepRef.headers = scrubHeaders(headers || []);
+            job.stepRef.body = scrubBody(rawBody || "");
           }
         } catch (eStep) {
         } finally {
