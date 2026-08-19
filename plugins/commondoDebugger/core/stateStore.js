@@ -214,6 +214,20 @@ const CmdStateStore = {
   },
 
   /**
+   * Resets active session states (runs, correlations, topology) to prevent state bleeding.
+   */
+  resetSessionState() {
+    _state.selectedRun = null;
+    _state.correlationLogs = [];
+    _state.logsByFlowId = {};
+    _state.topologyData = null;
+    _state.staticTopologyData = null;
+    _state.selectedNodeId = null;
+    _state.selectedNodeRunIndex = 0;
+    this.clearTransientCaches();
+  },
+
+  /**
    * Fully resets state store and all caches (e.g. on tenant/iFlow navigation).
    */
   clearAll() {

@@ -62,6 +62,11 @@ const CmdPdDiscoveryEngine = {
       if (log.Status === "FAILED") entry.status = "FAILED";
     });
 
+    // Ensure all flow runs are strictly sorted chronologically (earliest first)
+    flowStats.forEach((entry) => {
+      entry.runs.sort((a, b) => parseMs(a.LogStart) - parseMs(b.LogStart));
+    });
+
     // 2. Build directed edges directly from PredecessorMessageGuid
     const edgeMap = new Map(); // key -> edge
     const childFlowIds = new Set();
@@ -82,10 +87,25 @@ const CmdPdDiscoveryEngine = {
         if (parentFlowId && childFlowId && parentFlowId !== childFlowId) {
           const edgeKey = `${parentFlowId}->${childFlowId}`;
           if (!edgeMap.has(edgeKey)) {
+            let resolvedAddress = "";
+            const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
+            if (store) {
+              const childModel = store.getCachedBpmnModel(childFlowId);
+              const parentModel = store.getCachedBpmnModel(parentFlowId);
+              if (childModel?.inbound && childModel.inbound.length > 0) {
+                resolvedAddress = childModel.inbound[0].address || "";
+              }
+              if (!resolvedAddress && parentModel?.outbound && parentModel.outbound.length > 0) {
+                resolvedAddress = parentModel.outbound[0].address || "";
+              }
+            }
+
             edgeMap.set(edgeKey, {
               key: edgeKey,
               from: parentFlowId,
               to: childFlowId,
+              address: resolvedAddress || "ProcessDirect",
+              rawAddress: resolvedAddress || "ProcessDirect",
               matchType: "PredecessorMessageGuid Link",
               channelName: "ProcessDirect",
               runCount: 0,
@@ -255,6 +275,74 @@ const CmdPdDiscoveryEngine = {
     });
 
     return nodeLevels;
+  },
+
+  /**
+   * Enriches runtime topology edges with real ProcessDirect endpoint addresses from BPMN models.
+   * Performs smart parent-outbound to child-inbound matching for multi-inbound flows.
+   * @param {Object} topologyData - Topology object with nodes and edges
+   * @param {string} [packageId] - Content package ID
+   * @returns {Promise<Object>} Enriched topology object
+   */
+  async enrichEdgeAddresses(topologyData, packageId = null) {
+    if (!topologyData || !topologyData.nodes || !topologyData.edges || topologyData.edges.length === 0) {
+      return topologyData;
+    }
+
+    const bpmnService = typeof CmdBpmnParserService !== "undefined" ? CmdBpmnParserService : null;
+    if (!bpmnService) return topologyData;
+
+    try {
+      const poolFn = typeof CmdUtils !== "undefined" && CmdUtils.asyncPool
+        ? CmdUtils.asyncPool.bind(CmdUtils)
+        : (l, a, f) => Promise.all(a.map(f));
+
+      const models = {};
+      await poolFn(8, topologyData.nodes, async (node) => {
+        try {
+          models[node.id.toLowerCase()] = await bpmnService.getModel(node.id, packageId);
+        } catch (eModel) {
+          console.debug(`[CmdPdDiscoveryEngine] BPMN model query skipped for ${node.id}:`, eModel);
+        }
+      });
+
+      const matchAddr = (a1, a2) => (typeof CmdUtils !== "undefined" && CmdUtils.matchEndpointAddress ? CmdUtils.matchEndpointAddress(a1, a2) : String(a1).toLowerCase() === String(a2).toLowerCase());
+
+      topologyData.edges.forEach((edge) => {
+        const fromId = (edge.from || edge.source || "").toLowerCase();
+        const toId = (edge.to || edge.target || "").toLowerCase();
+        const parentModel = models[fromId];
+        const childModel = models[toId];
+
+        if (childModel && childModel.inbound && childModel.inbound.length > 0) {
+          let matchedAddress = "";
+
+          // 1. If child has multiple inbounds, match against parent's outbound endpoints
+          if (parentModel && parentModel.outbound && parentModel.outbound.length > 0) {
+            const matchedInbound = childModel.inbound.find((inb) =>
+              parentModel.outbound.some((outb) => matchAddr(inb.address, outb.address))
+            );
+            if (matchedInbound) {
+              matchedAddress = matchedInbound.address;
+            }
+          }
+
+          // 2. Fallback if single inbound or no specific parent outbound matched
+          if (!matchedAddress) {
+            matchedAddress = childModel.inbound[0].address;
+          }
+
+          if (matchedAddress) {
+            edge.address = matchedAddress;
+            edge.rawAddress = matchedAddress;
+          }
+        }
+      });
+    } catch (eEnrich) {
+      console.debug("[CmdPdDiscoveryEngine] Edge address enrichment failed:", eEnrich);
+    }
+
+    return topologyData;
   },
 };
 

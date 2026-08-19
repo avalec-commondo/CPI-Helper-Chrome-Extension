@@ -177,12 +177,39 @@ const CmdHeaderTraceButton = {
     this.checkExistingHeaderTraceStatus();
   },
 
+  _observer: null,
+  _debounceTimer: null,
+
   /**
-   * Initializes periodic injection observer.
+   * Initializes lightweight event-driven MutationObserver for header button injection.
+   * Eliminates rigid setInterval CPU draining on the main thread.
    */
   init() {
     this.injectButton();
-    setInterval(() => this.injectButton(), 2500);
+
+    if (typeof MutationObserver !== "undefined" && typeof document !== "undefined" && document.body) {
+      if (this._observer) {
+        this._observer.disconnect();
+      }
+
+      this._observer = new MutationObserver(() => {
+        if (document.getElementById("__commondo_header_trace_container")) return;
+
+        if (this._debounceTimer) clearTimeout(this._debounceTimer);
+        this._debounceTimer = setTimeout(() => {
+          this.injectButton();
+        }, 150);
+      });
+
+      try {
+        this._observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      } catch (eObs) {
+        console.debug("[CmdHeaderTraceButton] MutationObserver attach skipped:", eObs);
+      }
+    }
   },
 };
 

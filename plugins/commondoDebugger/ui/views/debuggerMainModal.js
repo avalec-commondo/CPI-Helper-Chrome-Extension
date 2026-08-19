@@ -105,13 +105,49 @@ const CmdDebuggerMainModal = {
     }
   },
 
+  closeModal() {
+    const modal = document.querySelector("#cmd-debugger-modal");
+    if (this.state.countdownInterval) {
+      clearInterval(this.state.countdownInterval);
+      this.state.countdownInterval = null;
+    }
+    if (this._escHandler) {
+      window.removeEventListener("keydown", this._escHandler);
+      this._escHandler = null;
+    }
+    if (modal) {
+      if (typeof $ !== "undefined" && typeof $(modal).modal === "function") {
+        $(modal).modal("hide");
+      } else {
+        modal.style.display = "none";
+      }
+    }
+    const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
+    if (store && typeof store.resetSessionState === "function") {
+      store.resetSessionState();
+    }
+  },
+
   /**
    * Assembles and displays the debugger modal dialog.
    */
   async openModal(runInfo = null) {
     const api = typeof CmdApiClient !== "undefined" ? CmdApiClient : null;
+    const store = typeof CmdStateStore !== "undefined" ? CmdStateStore : null;
     const utils = typeof CmdUtils !== "undefined" ? CmdUtils : {};
     const escapeHtml = utils.escapeHtml || ((s) => s || "");
+
+    // Reset session and modal state to prevent state mutability bleeding
+    if (store && typeof store.resetSessionState === "function") {
+      store.resetSessionState();
+    }
+    this.state.selectedNodeId = null;
+    this.state.selectedNodeRunIndex = 0;
+    this.state.selectedRun = null;
+    this.state.topologyData = null;
+    this.state.staticTopologyData = null;
+    this.state.logsByFlowId = {};
+    this.state.viewMode = "runtime";
 
     this.state.rootFlowId = typeof cpiData !== "undefined" && cpiData.integrationFlowId ? cpiData.integrationFlowId : "";
     this.state.packageId = typeof cpiData !== "undefined" && cpiData.currentPackageId ? cpiData.currentPackageId : api ? await api.resolveCurrentPackageId(this.state.rootFlowId) : "";
@@ -367,12 +403,10 @@ const CmdDebuggerMainModal = {
       $(modal)
         .modal({
           closable: true,
+          autofocus: false,
           observeChanges: true,
           onHidden: () => {
-            if (CmdDebuggerMainModal.state.countdownInterval) {
-              clearInterval(CmdDebuggerMainModal.state.countdownInterval);
-              CmdDebuggerMainModal.state.countdownInterval = null;
-            }
+            CmdDebuggerMainModal.closeModal();
           },
         })
         .modal("show");
@@ -494,6 +528,9 @@ const CmdDebuggerMainModal = {
 
     if (pdEngine) {
       this.state.topologyData = await pdEngine.discoverTopology(this.state.rootFlowId, correlationLogs);
+      if (typeof pdEngine.enrichEdgeAddresses === "function") {
+        await pdEngine.enrichEdgeAddresses(this.state.topologyData, this.state.packageId);
+      }
     } else {
       this.state.topologyData = {
         rootFlowId: this.state.rootFlowId,

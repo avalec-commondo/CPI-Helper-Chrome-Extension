@@ -270,6 +270,7 @@ const CmdZipExportService = {
             job.stepRef.body = scrubBody(rawBody || "");
           }
         } catch (eStep) {
+          console.warn(`[CmdZipExportService] Failed to fetch trace messages for runId ${job.runId}:`, eStep);
         } finally {
           completedSteps++;
           reportProgress(completedSteps, totalSteps, `Downloading step traces (${completedSteps}/${totalSteps})...`);
