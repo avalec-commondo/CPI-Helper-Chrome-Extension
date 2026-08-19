@@ -79,7 +79,7 @@ const CmdTraceManagerModal = {
     box.style.cssText = "background: #fff; border-radius: 8px; box-shadow: 0 4px 20px rgba(0,0,0,0.3); position: relative; width: 700px; max-width: 92vw; overflow: hidden; display: flex; flex-direction: column;";
     box.appendChild(modalContainer);
     overlay.appendChild(box);
-    document.body.appendChild(overlay);
+    body().appendChild(overlay);
 
     const closeModal = () => overlay.remove();
 

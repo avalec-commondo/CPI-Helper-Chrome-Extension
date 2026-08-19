@@ -182,9 +182,18 @@ const CmdHeaderTraceButton = {
 
   /**
    * Initializes lightweight event-driven MutationObserver for header button injection.
-   * Eliminates rigid setInterval CPU draining on the main thread.
+   * Only attaches observer if the plugin is actively enabled in CPI Helper.
    */
-  init() {
+  async init() {
+    const isActive = await this.isPluginActive();
+    if (!isActive) {
+      if (this._observer) {
+        this._observer.disconnect();
+        this._observer = null;
+      }
+      return;
+    }
+
     this.injectButton();
 
     if (typeof MutationObserver !== "undefined" && typeof document !== "undefined" && document.body) {

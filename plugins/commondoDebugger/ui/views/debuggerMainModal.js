@@ -261,7 +261,7 @@ const CmdDebuggerMainModal = {
         </div>
       `;
 
-      document.body.appendChild(modal);
+      body().appendChild(modal);
 
       // Event: Close Modal
       modal.querySelectorAll(".cmd-modal-close").forEach((btn) => {

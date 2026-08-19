@@ -575,7 +575,7 @@ const CmdTestMasterRunner = {
       </div>
     `;
 
-    document.body.appendChild(modal);
+    body().appendChild(modal);
 
     modal.querySelector("#__cmd_master_modal_close").onclick = () => modal.remove();
     modal.querySelector("#__cmd_master_modal_retest").onclick = () => this.runAllTests();
