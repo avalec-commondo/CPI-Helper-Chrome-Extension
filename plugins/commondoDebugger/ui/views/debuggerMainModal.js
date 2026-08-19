@@ -458,9 +458,9 @@ const CmdDebuggerMainModal = {
 
         const dateStr = utils.formatDateTime ? utils.formatDateTime(run.LogStart) : new Date(run.LogStart).toLocaleString();
         const status = run.Status || "COMPLETED";
-        const instanceId = run.MessageGuid || run.Id || run.CorrelationId || "";
+        const corrId = run.CorrelationId || run.MessageGuid || run.Id || "";
 
-        opt.textContent = `#${idx + 1} | ${dateStr} | Status: ${status} | ID: ${instanceId}`;
+        opt.textContent = `#${idx + 1} | ${dateStr} | Status: ${status} | Correlation: ${corrId}`;
         runSelect.appendChild(opt);
       });
 
