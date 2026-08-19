@@ -150,7 +150,9 @@ const CmdZipExportService = {
           if (run.Status === "FAILED" || run.Status === "ESCALATED" || node.status === "FAILED") {
             try {
               runRecord.errorInformation = await api.fetchErrorInformation(messageGuid);
-            } catch (eErr) {}
+            } catch (eErr) {
+              console.warn(`[CmdZipExportService] Failed to fetch error info for run ${messageGuid}:`, eErr);
+            }
           }
 
           try {
@@ -158,7 +160,10 @@ const CmdZipExportService = {
             if (runs && runs.length > 0) {
               const runId = runs[0].Id;
 
-              const runSteps = await api.fetchRunSteps(runId).catch(() => []);
+              const runSteps = await api.fetchRunSteps(runId).catch((eSteps) => {
+                console.warn(`[CmdZipExportService] Failed to fetch run steps for runId ${runId}:`, eSteps);
+                return [];
+              });
 
               (runSteps || []).forEach((step, sIdx) => {
                 if (step.ChildCount !== undefined) {
@@ -192,7 +197,9 @@ const CmdZipExportService = {
                 }
               });
             }
-          } catch (eRuns) {}
+          } catch (eRuns) {
+            console.warn(`[CmdZipExportService] Failed to harvest runs for flow ${flowId} / guid ${messageGuid}:`, eRuns);
+          }
         }
 
         flowRecord.runs[rIdx] = runRecord;
@@ -340,7 +347,9 @@ const CmdZipExportService = {
           this.templateCache = await resp.text();
           return this.templateCache;
         }
-      } catch (e) {}
+      } catch (eExt) {
+        console.debug("[CmdZipExportService] Extension runtime template fetch failed:", eExt);
+      }
     }
 
     // 2. Node.js environment loader (for test suites)
@@ -361,7 +370,9 @@ const CmdZipExportService = {
             return this.templateCache;
           }
         }
-      } catch (e) {}
+      } catch (eNode) {
+        console.debug("[CmdZipExportService] Node.js fs template read failed:", eNode);
+      }
     }
 
     return "";

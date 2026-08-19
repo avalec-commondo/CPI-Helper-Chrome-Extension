@@ -530,7 +530,7 @@ const CmdTopologyGraphView = {
             const s = parseMsFn(l.LogStart);
             const e = parseMsFn(l.LogEnd);
             const d = (s && e && e >= s) ? (e - s) : Number(l.Duration || 0);
-            return `  • Run #${i + 1}: ${formatDur(d)} (${l.Status || "COMPLETED"})`;
+            return `  • Run #${i + 1}: ${formatDur(d)} (${escapeHtml(l.Status || "COMPLETED")})`;
           }).join("\n");
         }
 

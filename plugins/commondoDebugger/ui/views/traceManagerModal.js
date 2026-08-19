@@ -298,7 +298,9 @@ const CmdTraceManagerModal = {
       actBtn.onclick = async () => {
         const selectedIds = Array.from(savedChecked);
         if (selectedIds.length === 0) {
-          alert("Please select at least one integration flow.");
+          if (typeof showToast === "function") {
+            showToast("Trace Manager", "Please select at least one integration flow.", "warning");
+          }
           return;
         }
 
@@ -326,7 +328,9 @@ const CmdTraceManagerModal = {
       deactBtn.onclick = async () => {
         const selectedIds = Array.from(savedChecked);
         if (selectedIds.length === 0) {
-          alert("Please select at least one integration flow.");
+          if (typeof showToast === "function") {
+            showToast("Trace Manager", "Please select at least one integration flow.", "warning");
+          }
           return;
         }
 

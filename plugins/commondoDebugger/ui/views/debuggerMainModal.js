@@ -100,7 +100,9 @@ const CmdDebuggerMainModal = {
           </span>
         `;
       }
-    } catch (e) {}
+    } catch (eStatus) {
+      console.warn("[CmdDebuggerMainModal] Failed to update header timer display:", eStatus);
+    }
   },
 
   /**
@@ -240,7 +242,9 @@ const CmdDebuggerMainModal = {
       modal.querySelector("#cmd-modal-jump-iflow-btn").onclick = async () => {
         const targetFlowId = CmdDebuggerMainModal.state.selectedNodeId || CmdDebuggerMainModal.state.rootFlowId;
         if (!targetFlowId) {
-          alert("No iFlow selected.");
+          if (typeof showToast === "function") {
+            showToast("Commondo Debugger", "No iFlow selected on canvas.", "warning");
+          }
           return;
         }
 
@@ -271,16 +275,19 @@ const CmdDebuggerMainModal = {
                   }
                 });
 
-                // Add / update this specific target flow jump
+                // Add / update this specific target flow jump with unique token
                 queue[targetFlowId] = {
                   messageGuid,
+                  token: `${targetFlowId}_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
                   timestamp: now,
                 };
 
                 chrome.storage.local.set({ cmd_pending_jumps: queue }, res);
               });
             });
-          } catch (eStorage) {}
+          } catch (eStorage) {
+            console.warn("[CmdDebuggerMainModal] Failed to enqueue jump token:", eStorage);
+          }
         }
 
         if (api && api.buildDesignUrl) {
@@ -297,7 +304,9 @@ const CmdDebuggerMainModal = {
         const currentTopo = CmdDebuggerMainModal.state.viewMode === "static" ? CmdDebuggerMainModal.state.staticTopologyData : CmdDebuggerMainModal.state.topologyData;
 
         if (!currentTopo || !currentTopo.nodes || currentTopo.nodes.length === 0) {
-          alert("No topology data available to export.");
+          if (typeof showToast === "function") {
+            showToast("Export Bundle", "No topology data available to export.", "warning");
+          }
           return;
         }
 
@@ -316,7 +325,11 @@ const CmdDebuggerMainModal = {
             setBtnProgress(text);
           });
         } catch (eZip) {
-          alert("Export failed: " + eZip.message);
+          if (typeof showToast === "function") {
+            showToast("Export Failed", eZip.message || String(eZip), "error");
+          } else {
+            console.error("[CommondoDebugger] Export failed:", eZip);
+          }
         } finally {
           exportBtn.disabled = false;
           exportBtn.innerHTML = originalHtml;
@@ -466,7 +479,9 @@ const CmdDebuggerMainModal = {
         if (Array.isArray(fetched) && fetched.length > 0) {
           correlationLogs = fetched;
         }
-      } catch (eLogs) {}
+      } catch (eLogs) {
+        console.warn("[CmdDebuggerMainModal] Failed to fetch full correlation logs, falling back to root run log:", eLogs);
+      }
     }
 
     // Group logs by flow ID
@@ -511,7 +526,9 @@ const CmdDebuggerMainModal = {
         );
       });
       console.groupEnd();
-    } catch (eDiag) {}
+    } catch (eDiag) {
+      console.debug("[CmdDebuggerMainModal] Diagnostics print skipped:", eDiag);
+    }
 
     this.renderCurrentView();
   },
@@ -532,11 +549,23 @@ const CmdDebuggerMainModal = {
         <span style="margin-left: 10px; font-size: 0.9rem;">Discovering package ProcessDirect architecture via BFS...</span>
       </div>`;
 
-    if (staticEngine && this.state.rootFlowId && this.state.packageId) {
-      this.state.staticTopologyData = await staticEngine.discoverStaticArchitecture(this.state.rootFlowId, this.state.packageId);
+    try {
+      if (staticEngine && this.state.rootFlowId && this.state.packageId) {
+        this.state.staticTopologyData = await staticEngine.discoverStaticArchitecture(this.state.rootFlowId, this.state.packageId);
+      }
+      this.renderCurrentView();
+    } catch (eStatic) {
+      console.error("[CommondoDebugger] Static architecture discovery error:", eStatic);
+      const utils = typeof CmdUtils !== "undefined" ? CmdUtils : {};
+      const escapeHtml = utils.escapeHtml || ((s) => s || "");
+      if (canvas) {
+        canvas.innerHTML = `
+          <div style="text-align: center; color: #ef4444; margin-top: 140px; padding: 20px;">
+            <div style="font-size: 1rem; font-weight: bold; margin-bottom: 6px;">Failed to Discover Package Architecture</div>
+            <div style="font-size: 0.85rem; color: #64748b;">${escapeHtml(eStatic.message || String(eStatic))}</div>
+          </div>`;
+      }
     }
-
-    this.renderCurrentView();
   },
 
   /**
@@ -790,9 +819,6 @@ const CmdDebuggerMainModal = {
     // Initialize with all parent flows or the single parent flow
     const initialParentFlowId = parentFlows.length === 1 ? parentFlows[0].flowId : "ALL";
     updateParentInstanceDropdown(initialParentFlowId);
-
-    // Initially populate with all runs
-    populateFilteredRuns(logsForNode);
 
     this.renderCurrentView();
   },

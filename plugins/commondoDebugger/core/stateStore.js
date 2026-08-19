@@ -140,7 +140,7 @@ const CmdStateStore = {
   },
 
   // -----------------------------------------------------------------------
-  // Cache Management
+  // Cache Management (with LRU/FIFO Memory Bounding)
   // -----------------------------------------------------------------------
 
   getCachedBpmnModel(iflowId) {
@@ -150,6 +150,12 @@ const CmdStateStore = {
 
   setCachedBpmnModel(iflowId, model) {
     if (iflowId && model) {
+      // LRU eviction cap: 100 models
+      while (bpmnModelCache.size >= 100) {
+        const oldestKey = bpmnModelCache.keys().next().value;
+        if (oldestKey !== undefined) bpmnModelCache.delete(oldestKey);
+        else break;
+      }
       bpmnModelCache.set(iflowId, model);
       bpmnModelCache.set(iflowId.toLowerCase(), model);
     }
@@ -162,6 +168,12 @@ const CmdStateStore = {
 
   setCachedTracePayload(messageGuid, payloadData) {
     if (messageGuid && payloadData) {
+      // LRU eviction cap: 50 trace payloads
+      while (tracePayloadCache.size >= 50) {
+        const oldestKey = tracePayloadCache.keys().next().value;
+        if (oldestKey !== undefined) tracePayloadCache.delete(oldestKey);
+        else break;
+      }
       tracePayloadCache.set(messageGuid, payloadData);
     }
   },
@@ -173,6 +185,12 @@ const CmdStateStore = {
 
   setCachedPackageArtifacts(packageId, artifacts) {
     if (packageId && Array.isArray(artifacts)) {
+      // LRU eviction cap: 50 package lists
+      while (packageArtifactsCache.size >= 50) {
+        const oldestKey = packageArtifactsCache.keys().next().value;
+        if (oldestKey !== undefined) packageArtifactsCache.delete(oldestKey);
+        else break;
+      }
       packageArtifactsCache.set(packageId, artifacts);
     }
   },

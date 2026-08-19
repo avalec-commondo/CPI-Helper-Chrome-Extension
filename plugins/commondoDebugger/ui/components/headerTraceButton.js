@@ -35,7 +35,9 @@ const CmdHeaderTraceButton = {
           });
         });
       }
-    } catch (e) {}
+    } catch (eActive) {
+      console.warn("[CmdHeaderTraceButton] Failed to check isPluginActive status:", eActive);
+    }
     return true;
   },
 
@@ -72,6 +74,11 @@ const CmdHeaderTraceButton = {
       }
     };
 
+    if (this.timerInterval) {
+      clearInterval(this.timerInterval);
+      this.timerInterval = null;
+    }
+
     update();
     this.timerInterval = setInterval(update, 1000);
   },
@@ -98,7 +105,9 @@ const CmdHeaderTraceButton = {
           this.updateHeaderTraceTimer(lastTime);
         }
       }
-    } catch (e) {}
+    } catch (eStatus) {
+      console.warn("[CmdHeaderTraceButton] checkExistingHeaderTraceStatus failed:", eStatus);
+    }
   },
 
   /**

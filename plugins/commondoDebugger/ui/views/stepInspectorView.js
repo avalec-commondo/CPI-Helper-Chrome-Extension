@@ -70,7 +70,9 @@ const CmdStepInspectorView = {
         stepNameMap = bpmnModel?.steps || {};
         exceptionShapes = bpmnModel?.exceptionShapes || {};
         bpmnFlowName = bpmnModel?.flowName || "";
-      } catch (eB) {}
+      } catch (eB) {
+        console.debug("[CmdStepInspectorView] BPMN model query skipped/failed:", eB);
+      }
     }
 
     const artifactName = (store ? store.getArtifactName(iFlowId) : "") || bpmnFlowName || logEntry.IntegrationArtifact?.Name || logEntry.IntegrationFlowName || iFlowId;

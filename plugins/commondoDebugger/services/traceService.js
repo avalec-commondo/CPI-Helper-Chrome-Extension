@@ -72,7 +72,9 @@ const CmdTraceService = {
               });
             }
           }
-        } catch (eStep) {}
+        } catch (eStep) {
+          console.warn(`[CmdTraceService] Failed to harvest step payload for step ${step?.ChildCount}:`, eStep);
+        }
       });
     } catch (err) {
       console.warn(`[CmdTraceService] Trace harvesting error for ${messageGuid}:`, err);
@@ -326,7 +328,9 @@ const CmdTraceService = {
               }
             }
           }
-        } catch (e) {}
+        } catch (ePropFetch) {
+          console.debug(`[CmdTraceService] Trace properties query failed for run ${runId} step ${step.ChildCount}:`, ePropFetch);
+        }
       }
     }
     return null;
@@ -393,14 +397,18 @@ const CmdTraceService = {
       try {
         errorInfo = await api.fetchErrorInformation(logEntry.MessageGuid, runId);
         logEntry.__errorInfo = errorInfo;
-      } catch (eErr) {}
+      } catch (eErr) {
+        console.warn(`[CmdTraceService] Failed to fetch ErrorInformation for ${logEntry.MessageGuid}:`, eErr);
+      }
 
       // If OData ErrorInformation is empty for COMPLETED run, inspect trace properties
       if (!errorInfo && hasHandledException && runId && steps && steps.length > 0) {
         try {
           errorInfo = await this.fetchCaughtExceptionFromTrace(runId, steps);
           if (errorInfo) logEntry.__errorInfo = errorInfo;
-        } catch (eTr) {}
+        } catch (eTr) {
+          console.warn(`[CmdTraceService] Failed to fetch caught exception from trace for ${runId}:`, eTr);
+        }
       }
     }
 

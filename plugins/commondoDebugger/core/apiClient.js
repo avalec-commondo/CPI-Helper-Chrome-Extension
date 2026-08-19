@@ -149,7 +149,9 @@ const CmdApiClient = {
         try {
           const token = await getCsrfToken(false);
           if (token) reqHeaders["X-CSRF-Token"] = token;
-        } catch (eCsrf) {}
+        } catch (eCsrf) {
+          console.warn("[CmdApiClient] Failed to obtain CSRF token from getCsrfToken:", eCsrf);
+        }
       }
     }
 
@@ -260,13 +262,17 @@ const CmdApiClient = {
           const raw = resp?.artifactInformations || resp?.artifactInformation || [];
           artifacts = Array.isArray(raw) ? raw : [raw];
         }
-      } catch (e) {}
+      } catch (eNeo) {
+        console.warn("[CmdApiClient] Neo fetchDeployedArtifacts command error:", eNeo);
+      }
     } else {
       // Cloud Foundry: IntegrationRuntimeArtifacts OData entity
       try {
         const res = await this.getJson("IntegrationRuntimeArtifacts?$format=json&$select=Id,Name");
         if (Array.isArray(res)) artifacts = res;
-      } catch (e) {}
+      } catch (eCf) {
+        console.warn("[CmdApiClient] CF IntegrationRuntimeArtifacts query error:", eCf);
+      }
     }
 
     const deployedList = artifacts
@@ -364,7 +370,9 @@ const CmdApiClient = {
         if (rawText && typeof rawText === "string" && rawText.trim()) {
           return rawText.trim();
         }
-      } catch (e1) {}
+      } catch (e1) {
+        console.debug(`[CmdApiClient] MPL ErrorInformation/$value text query failed for ${messageGuid}:`, e1);
+      }
 
       try {
         const errorJson = await this.getJson(`MessageProcessingLogs('${encodeURIComponent(messageGuid)}')/ErrorInformation?$format=json`);
@@ -373,7 +381,9 @@ const CmdApiClient = {
           if (msg) return String(msg).trim();
           if (typeof errorJson === "string") return errorJson.trim();
         }
-      } catch (e2) {}
+      } catch (e2) {
+        console.debug(`[CmdApiClient] MPL ErrorInformation JSON query failed for ${messageGuid}:`, e2);
+      }
     }
 
     if (runId) {
@@ -382,7 +392,9 @@ const CmdApiClient = {
         if (runText && typeof runText === "string" && runText.trim()) {
           return runText.trim();
         }
-      } catch (e3) {}
+      } catch (e3) {
+        console.debug(`[CmdApiClient] MPL Run ErrorInformation/$value text query failed for ${runId}:`, e3);
+      }
 
       try {
         const runJson = await this.getJson(`MessageProcessingLogRuns('${encodeURIComponent(runId)}')/ErrorInformation?$format=json`);
@@ -390,7 +402,9 @@ const CmdApiClient = {
           const msg = runJson.ErrorMessage || runJson.LastError;
           if (msg) return String(msg).trim();
         }
-      } catch (e4) {}
+      } catch (e4) {
+        console.debug(`[CmdApiClient] MPL Run ErrorInformation JSON query failed for ${runId}:`, e4);
+      }
     }
 
     return null;
@@ -445,7 +459,9 @@ const CmdApiClient = {
               if (mRes !== undefined && mRes !== null) {
                 return { ok: true, iflowId, data: mRes };
               }
-            } catch (eM) {}
+            } catch (eM) {
+              console.debug("[CmdApiClient] CF makeCallPromise deploy fallback:", eM);
+            }
           }
 
           // Direct fetch fallback with null body
@@ -489,7 +505,9 @@ const CmdApiClient = {
         if (res.ok) {
           return { ok: true, iflowId, data: res.data };
         }
-      } catch (eReq) {}
+      } catch (eReq) {
+        console.warn(`[CmdApiClient] Direct Neo OData deploy request failed for ${iflowId}:`, eReq);
+      }
     }
 
     return { ok: false, iflowId, error: "Deployment failed on all routes." };
@@ -543,7 +561,9 @@ const CmdApiClient = {
             }
           }
         }
-      } catch (e) {}
+      } catch (ePkgSearch) {
+        console.warn(`[CmdApiClient] Workspace package reverse-lookup failed for ${iFlowId}:`, ePkgSearch);
+      }
     }
 
     return "";
@@ -563,7 +583,9 @@ const CmdApiClient = {
         });
         if (workspaceGuidCache.has(pkgName)) return workspaceGuidCache.get(pkgName);
       }
-    } catch (e) {}
+    } catch (eWs) {
+      console.warn(`[CmdApiClient] resolveWorkspaceGuid failed for ${pkgName}:`, eWs);
+    }
 
     return pkgName;
   },
@@ -597,7 +619,9 @@ const CmdApiClient = {
             }
           });
         }
-      } catch (e) {}
+      } catch (eNeoArts) {
+        console.warn(`[CmdApiClient] Neo fetchPackageArtifacts failed for ${packageId}:`, eNeoArts);
+      }
     } else {
       try {
         const wsGuid = await this.resolveWorkspaceGuid(packageId);
@@ -631,7 +655,9 @@ const CmdApiClient = {
             }
           }
         });
-      } catch (e) {}
+      } catch (eCfArts) {
+        console.warn(`[CmdApiClient] Cloud Foundry fetchPackageArtifacts failed for ${packageId}:`, eCfArts);
+      }
     }
 
     if (store && packageArts.length > 0) {
@@ -674,7 +700,9 @@ const CmdApiClient = {
         try {
           const res = await this.getJson(p);
           if (res) return res;
-        } catch (e) {}
+        } catch (ePath) {
+          console.debug(`[CmdApiClient] fetchModelerJson path ${p} probe failed:`, ePath);
+        }
       }
     }
     return null;

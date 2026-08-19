@@ -118,7 +118,9 @@ async function checkPendingInlineTraceJump() {
           delete curQueue[matchedKey];
           chrome.storage.local.set({ cmd_pending_jumps: curQueue });
         });
-      } catch (e) {}
+      } catch (e) {
+        console.warn("[CommondoDebugger] Failed to remove matched jump key:", e);
+      }
     };
 
     const tryActivate = async () => {
@@ -161,23 +163,21 @@ async function checkPendingInlineTraceJump() {
       return false;
     };
 
-    // Fast check immediately
-    const activatedNow = await tryActivate();
-    if (activatedNow) return;
-
-    // Polling loop for canvas readiness (up to 30 seconds: 75 attempts x 400ms)
+    // Sequential non-overlapping async poll for canvas readiness (up to 30s: 75 attempts x 400ms)
     let attempts = 0;
-    const checkCanvasInterval = setInterval(async () => {
+    const pollCanvas = async () => {
       attempts++;
       const done = await tryActivate();
-      if (done || attempts > 75) {
-        clearInterval(checkCanvasInterval);
-        if (!done) {
-          removeMatchedKey();
-          isActivatingInlineTrace = false;
-        }
+      if (done) return;
+      if (attempts < 75) {
+        setTimeout(pollCanvas, 400);
+      } else {
+        removeMatchedKey();
+        isActivatingInlineTrace = false;
       }
-    }, 400);
+    };
+
+    pollCanvas();
   });
 }
 

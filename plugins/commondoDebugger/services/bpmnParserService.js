@@ -256,7 +256,9 @@ const CmdBpmnParserService = {
             }
           }
         });
-      } catch (eProp) {}
+      } catch (eProp) {
+        console.debug("[CmdBpmnParserService] Failed to parse parameters.prop:", eProp);
+      }
     }
 
     // 2. Parse parameters.propdef defaults
@@ -277,7 +279,9 @@ const CmdBpmnParserService = {
             paramMap[id] = defVal;
           }
         }
-      } catch (eDef) {}
+      } catch (eDef) {
+        console.debug("[CmdBpmnParserService] Failed to parse parameters.propdef:", eDef);
+      }
     }
 
     // 3. Extract metainfo.prop
@@ -290,7 +294,9 @@ const CmdBpmnParserService = {
           if (trimmed.startsWith("name=")) flowName = trimmed.substring(5).trim();
           if (trimmed.startsWith("description=")) flowDescription = trimmed.substring(12).trim();
         });
-      } catch (eMeta) {}
+      } catch (eMeta) {
+        console.debug("[CmdBpmnParserService] Failed to extract metainfo.prop:", eMeta);
+      }
     }
 
     // 4. Parse BPMN scenario flow XML

@@ -241,7 +241,9 @@ const CmdUtils = {
           chrome.storage.local.remove(list, () => resolve(true));
         });
       }
-    } catch (e) {}
+    } catch (e) {
+      console.warn("[CmdUtils] storageRemove failed:", e);
+    }
     return false;
   },
 };

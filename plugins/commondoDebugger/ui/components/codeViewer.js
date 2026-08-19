@@ -62,6 +62,9 @@ const CmdCodeViewer = {
     const utils = typeof CmdUtils !== "undefined" ? CmdUtils : {};
     const escapeHtml = utils.escapeHtml || ((s) => s || "");
 
+    container.__activeRawContent = formatted;
+    container.__activeContentType = "payload";
+
     container.innerHTML = `
       <div class="cmd-code-viewer" style="display: flex; flex-direction: column; background: #0f172a; border-radius: 6px; overflow: hidden; border: 1px solid #334155; font-family: monospace; font-size: 0.78rem;">
         <div style="display: flex; justify-content: space-between; align-items: center; background: #1e293b; padding: 6px 12px; border-bottom: 1px solid #334155;">
@@ -109,6 +112,8 @@ const CmdCodeViewer = {
 
     if (!items || items.length === 0) {
       container.innerHTML = `<div style="color: #94a3b8; font-size: 0.8rem; font-style: italic; padding: 6px; background: #0f172a; border-radius: 4px;">No ${escapeHtml(title).toLowerCase()} recorded for this step.</div>`;
+      container.__activeRawContent = "";
+      container.__activeContentType = title.toLowerCase();
       return;
     }
 
@@ -118,6 +123,10 @@ const CmdCodeViewer = {
       const nameB = String(b.Name || b.name || "").toLowerCase();
       return nameA.localeCompare(nameB);
     });
+
+    const textLines = sortedItems.map((it) => `${it.Name || it.name}: ${it.Value || it.value}`).join("\n");
+    container.__activeRawContent = textLines;
+    container.__activeContentType = title.toLowerCase();
 
     const rows = sortedItems
       .map(
