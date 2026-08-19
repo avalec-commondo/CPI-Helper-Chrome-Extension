@@ -73,11 +73,7 @@ const CmdStepInspectorView = {
       } catch (eB) {}
     }
 
-    const artifactName = (store ? store.getArtifactName(iFlowId) : "")
-      || bpmnFlowName
-      || logEntry.IntegrationArtifact?.Name
-      || logEntry.IntegrationFlowName
-      || iFlowId;
+    const artifactName = (store ? store.getArtifactName(iFlowId) : "") || bpmnFlowName || logEntry.IntegrationArtifact?.Name || logEntry.IntegrationFlowName || iFlowId;
 
     const traceService = typeof CmdTraceService !== "undefined" ? CmdTraceService : null;
     let bpmnModel = { steps: stepNameMap, exceptionShapes: exceptionShapes, flowName: bpmnFlowName };
@@ -96,14 +92,22 @@ const CmdStepInspectorView = {
     const runGuid = logEntry.MessageGuid || logEntry.Id || "";
     const logStartMs = parseMs(logEntry.LogStart);
     const logEndMs = parseMs(logEntry.LogEnd);
-    const runDurMs = (logStartMs && logEndMs && logEndMs >= logStartMs) ? (logEndMs - logStartMs) : Number(logEntry.Duration || 0);
+    const runDurMs = logStartMs && logEndMs && logEndMs >= logStartMs ? logEndMs - logStartMs : Number(logEntry.Duration || 0);
     const runDurFormatted = utils.formatDuration ? utils.formatDuration(runDurMs) : `${runDurMs}ms`;
+
+    // Parent lineage badge definition
+    const parentFlow = logEntry._callerFlowId;
+    const parentGuid = logEntry._callerMessageGuid || logEntry.PredecessorMessageGuid;
+    const parentBadgeHtml = parentFlow
+      ? `<span style="font-size: 0.72rem; color: #4338ca; background: #e0e7ff; border: 1px solid #c7d2fe; border-radius: 3px; padding: 1px 6px; font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 170px;" title="Called by parent flow: ${escapeHtml(parentFlow)}${parentGuid ? ` (GUID: ${escapeHtml(parentGuid)})` : ""}">Parent: ${escapeHtml(parentFlow)}</span>`
+      : `<span style="font-size: 0.72rem; color: #047857; background: #d1fae5; border: 1px solid #a7f3d0; border-radius: 3px; padding: 1px 6px; font-weight: 600;" title="Initial flow execution or root trigger">Root Trigger</span>`;
 
     const runIdHeaderHtml = runGuid
       ? `<div style="display: flex; justify-content: space-between; align-items: center; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 4px; padding: 5px 8px; font-size: 0.76rem; color: #475569; gap: 8px;">
-           <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; min-width: 0;">
-             <span style="font-weight: 600; flex-shrink: 0;">Instance ID:</span>
-             <span style="font-family: monospace; color: #0284c7; font-weight: bold; user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${escapeHtml(runGuid)}</span>
+           <div style="display: flex; align-items: center; gap: 6px; overflow: hidden; min-width: 0; flex: 1;">
+             <span style="font-weight: 600; flex-shrink: 0;">Instance:</span>
+             <span style="font-family: monospace; color: #0284c7; font-weight: bold; user-select: all; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(runGuid)}">${escapeHtml(runGuid)}</span>
+             ${parentBadgeHtml}
            </div>
            <span style="flex-shrink: 0; font-weight: 600; color: #334155; background: #e2e8f0; border-radius: 3px; padding: 1px 6px;" title="Duration of this run">${runDurFormatted}</span>
          </div>`
@@ -114,18 +118,21 @@ const CmdStepInspectorView = {
     // Red Banner for Unhandled Fatal Failure
     let errorBannerHtml = "";
     if (analysis.isFailed && (analysis.errorInfo || failedSteps.length > 0)) {
-      const multiStepWarning = failedSteps.length > 1
-        ? `<div style="font-size: 0.74rem; color: #7f1d1d; margin-bottom: 6px; font-weight: 600;">
+      const multiStepWarning =
+        failedSteps.length > 1
+          ? `<div style="font-size: 0.74rem; color: #7f1d1d; margin-bottom: 6px; font-weight: 600;">
              Multiple failed steps detected (${failedSteps.length} failures across branches):
              <ul style="margin: 3px 0 0 16px; padding: 0;">
-               ${failedSteps.map((fs) => {
-                 const fid = fs.ModelStepId || fs.StepId?.split("#")[0] || fs.StepId;
-                 const fn = stepNameMap[fid] || fs.StepId;
-                 return `<li><b>${escapeHtml(fn)}</b>: ${escapeHtml(fs.ErrorMessage || "Failed")}</li>`;
-               }).join("")}
+               ${failedSteps
+                 .map((fs) => {
+                   const fid = fs.ModelStepId || fs.StepId?.split("#")[0] || fs.StepId;
+                   const fn = stepNameMap[fid] || fs.StepId;
+                   return `<li><b>${escapeHtml(fn)}</b>: ${escapeHtml(fs.ErrorMessage || "Failed")}</li>`;
+                 })
+                 .join("")}
              </ul>
            </div>`
-        : "";
+          : "";
 
       errorBannerHtml = `
         <div class="cmd-error-banner" style="background: #fef2f2; border: 1px solid #f87171; border-radius: 6px; padding: 10px; box-shadow: 0 1px 3px rgba(239, 68, 68, 0.08);">
@@ -144,18 +151,21 @@ const CmdStepInspectorView = {
       const triggerStepTitle = analysis.triggerStepTitle || "a processing step";
       const caughtMsg = analysis.errorInfo || `An exception occurred during execution and was caught by the Exception Subprocess.`;
 
-      const multiStepHandledWarning = failedSteps.length > 1
-        ? `<div style="font-size: 0.74rem; color: #78350f; margin-bottom: 6px;">
+      const multiStepHandledWarning =
+        failedSteps.length > 1
+          ? `<div style="font-size: 0.74rem; color: #78350f; margin-bottom: 6px;">
              <b>${failedSteps.length} exceptions caught across parallel branches:</b>
              <ul style="margin: 3px 0 0 16px; padding: 0;">
-               ${failedSteps.map((fs) => {
-                 const fid = fs.ModelStepId || fs.StepId?.split("#")[0] || fs.StepId;
-                 const fn = stepNameMap[fid] || fs.StepId;
-                 return `<li><b>${escapeHtml(fn)}</b>: ${escapeHtml(fs.ErrorMessage || "Caught Exception")}</li>`;
-               }).join("")}
+               ${failedSteps
+                 .map((fs) => {
+                   const fid = fs.ModelStepId || fs.StepId?.split("#")[0] || fs.StepId;
+                   const fn = stepNameMap[fid] || fs.StepId;
+                   return `<li><b>${escapeHtml(fn)}</b>: ${escapeHtml(fs.ErrorMessage || "Caught Exception")}</li>`;
+                 })
+                 .join("")}
              </ul>
            </div>`
-        : `<div style="font-size: 0.76rem; color: #78350f; margin-bottom: 6px;">
+          : `<div style="font-size: 0.76rem; color: #78350f; margin-bottom: 6px;">
              An exception was triggered on <b>${escapeHtml(triggerStepTitle)}</b>, and was caught &amp; handled by the flow's Exception Subprocess (Overall flow status: <b>COMPLETED</b>).
            </div>`;
 
@@ -191,7 +201,9 @@ const CmdStepInspectorView = {
           const errText = container.querySelector(".cmd-error-text")?.innerText || "";
           navigator.clipboard.writeText(errText).then(() => {
             copyBtn.innerText = "Copied!";
-            setTimeout(() => { copyBtn.innerText = "Copy Exception"; }, 2000);
+            setTimeout(() => {
+              copyBtn.innerText = "Copy Exception";
+            }, 2000);
           });
         };
       }
@@ -211,13 +223,14 @@ const CmdStepInspectorView = {
         const errText = container.querySelector(".cmd-error-text")?.innerText || "";
         navigator.clipboard.writeText(errText).then(() => {
           copyBtn.innerText = "Copied!";
-          setTimeout(() => { copyBtn.innerText = isFailed ? "Copy Error" : "Copy Exception"; }, 2000);
+          setTimeout(() => {
+            copyBtn.innerText = analysis.isFailed ? "Copy Error" : "Copy Exception";
+          }, 2000);
         });
       };
     }
 
     const stepsListDiv = container.querySelector("#cmd-steps-list-container");
-
     const isFlowFailed = Boolean(analysis.isFailed);
 
     steps.forEach((step, idx) => {
@@ -240,7 +253,15 @@ const CmdStepInspectorView = {
       const status = step.Status || "COMPLETED";
 
       const isStepFailed = status === "FAILED" || status === "ERROR" || Boolean(step.ErrorMessage);
-      const isInsideExceptionSubprocess = exceptionShapes[baseShapeId] || exceptionShapes[baseShapeId.toLowerCase()] || String(step.Activity || "").toLowerCase().includes("errorstart") || String(step.Activity || "").toLowerCase().includes("exceptionsubprocess");
+      const isInsideExceptionSubprocess =
+        exceptionShapes[baseShapeId] ||
+        exceptionShapes[baseShapeId.toLowerCase()] ||
+        String(step.Activity || "")
+          .toLowerCase()
+          .includes("errorstart") ||
+        String(step.Activity || "")
+          .toLowerCase()
+          .includes("exceptionsubprocess");
 
       let cardStyle = "border: 1px solid #e2e8f0; border-radius: 6px; padding: 10px; background: #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.04);";
       let statusBadgeClass = "green";

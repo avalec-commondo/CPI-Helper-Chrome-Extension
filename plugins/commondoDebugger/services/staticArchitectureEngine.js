@@ -42,9 +42,7 @@ const CmdStaticArchitectureEngine = {
     // 1. Fetch models for all package flows concurrently via 16-worker async pool
     const modelsByFlowId = {};
     let completed = 0;
-    const poolFn = typeof CmdUtils !== "undefined" && CmdUtils.asyncPool
-      ? CmdUtils.asyncPool.bind(CmdUtils)
-      : (limit, arr, fn) => Promise.all(arr.map(fn));
+    const poolFn = typeof CmdUtils !== "undefined" && CmdUtils.asyncPool ? CmdUtils.asyncPool.bind(CmdUtils) : (limit, arr, fn) => Promise.all(arr.map(fn));
 
     await poolFn(16, flowIds, async (fid) => {
       try {

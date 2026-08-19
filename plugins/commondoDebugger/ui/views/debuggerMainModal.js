@@ -17,6 +17,7 @@ const CmdDebuggerMainModal = {
     logsByFlowId: {},
     selectedNodeId: null,
     selectedNodeRunIndex: 0,
+    selectedParentFilter: "ALL",
     countdownInterval: null,
   },
 
@@ -188,7 +189,22 @@ const CmdDebuggerMainModal = {
                 <div style="font-weight: 600; color: #1e293b; font-size: 0.88rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">
                   <span id="cmd-inspector-title">Step Trace Inspector</span>
                 </div>
-                <div id="cmd-inspector-run-selector" style="display: none; width: 100%;">
+                
+                <!-- Dropdown 1: Parent Flow Selector (Visible when multiple parent flows call this node) -->
+                <div id="cmd-inspector-parent-flow-selector" style="display: none; width: 100%; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 0.75rem; font-weight: 600; color: #64748b;">Parent Flow:</span>
+                  <select id="cmd-node-parent-flow-select" class="ui fluid dropdown" style="width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff;"></select>
+                </div>
+
+                <!-- Dropdown 2: Parent Run Instance Selector (Visible when parent flow ran multiple times) -->
+                <div id="cmd-inspector-parent-instance-selector" style="display: none; width: 100%; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 0.75rem; font-weight: 600; color: #64748b;">Parent Run Instance:</span>
+                  <select id="cmd-node-parent-instance-select" class="ui fluid dropdown" style="width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff;"></select>
+                </div>
+
+                <!-- Dropdown 3: Current iFlow Run Selector -->
+                <div id="cmd-inspector-run-selector" style="display: none; width: 100%; flex-direction: column; gap: 4px;">
+                  <span style="font-size: 0.75rem; font-weight: 600; color: #64748b;">Run Instance:</span>
                   <select id="cmd-node-run-select" class="ui fluid dropdown" style="width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff;"></select>
                 </div>
               </div>
@@ -335,16 +351,18 @@ const CmdDebuggerMainModal = {
 
     // Show Semantic UI Modal
     if (typeof $ !== "undefined" && typeof $(modal).modal === "function") {
-      $(modal).modal({
-        closable: true,
-        observeChanges: true,
-        onHidden: () => {
-          if (CmdDebuggerMainModal.state.countdownInterval) {
-            clearInterval(CmdDebuggerMainModal.state.countdownInterval);
-            CmdDebuggerMainModal.state.countdownInterval = null;
-          }
-        },
-      }).modal("show");
+      $(modal)
+        .modal({
+          closable: true,
+          observeChanges: true,
+          onHidden: () => {
+            if (CmdDebuggerMainModal.state.countdownInterval) {
+              clearInterval(CmdDebuggerMainModal.state.countdownInterval);
+              CmdDebuggerMainModal.state.countdownInterval = null;
+            }
+          },
+        })
+        .modal("show");
     } else {
       modal.style.display = "flex";
     }
@@ -479,9 +497,18 @@ const CmdDebuggerMainModal = {
         const parentEdges = (this.state.topologyData?.edges || []).filter((e) => (e.to && e.to.toLowerCase() === flowId.toLowerCase()) || (e.target && e.target.toLowerCase() === flowId.toLowerCase()));
         const childEdges = (this.state.topologyData?.edges || []).filter((e) => (e.from && e.from.toLowerCase() === flowId.toLowerCase()) || (e.source && e.source.toLowerCase() === flowId.toLowerCase()));
         console.log(`  [Node #${idx + 1}] Flow: %c${flowId}%c (Level ${node.level ?? "?"}) | Runs: ${logs.length}`, "font-weight:bold;color:#059669;", "color:inherit;");
-        console.log(`    ├── Incoming Parents (${parentEdges.length}):`, parentEdges.map((e) => `${e.from || e.source} [${e.address || "ProcessDirect"}]`));
-        console.log(`    ├── Outgoing Children (${childEdges.length}):`, childEdges.map((e) => `${e.to || e.target} [${e.address || "ProcessDirect"}]`));
-        console.log(`    └── Execution Runs (${logs.length}):`, logs.map((l, i) => `Run #${i + 1} (${l.Status || "COMPLETED"}): ${l.MessageGuid || l.Id}`));
+        console.log(
+          `    ├── Incoming Parents (${parentEdges.length}):`,
+          parentEdges.map((e) => `${e.from || e.source} [${e.address || "ProcessDirect"}]`)
+        );
+        console.log(
+          `    ├── Outgoing Children (${childEdges.length}):`,
+          childEdges.map((e) => `${e.to || e.target} [${e.address || "ProcessDirect"}]`)
+        );
+        console.log(
+          `    └── Execution Runs (${logs.length}):`,
+          logs.map((l, i) => `Run #${i + 1} (${l.Status || "COMPLETED"}): ${l.MessageGuid || l.Id}`)
+        );
       });
       console.groupEnd();
     } catch (eDiag) {}
@@ -543,6 +570,10 @@ const CmdDebuggerMainModal = {
     const stepInspector = typeof CmdStepInspectorView !== "undefined" ? CmdStepInspectorView : null;
 
     const titleElem = modal.querySelector("#cmd-inspector-title");
+    const parentFlowSelectorDiv = modal.querySelector("#cmd-inspector-parent-flow-selector");
+    const nodeParentFlowSelect = modal.querySelector("#cmd-node-parent-flow-select");
+    const parentInstanceSelectorDiv = modal.querySelector("#cmd-inspector-parent-instance-selector");
+    const nodeParentInstanceSelect = modal.querySelector("#cmd-node-parent-instance-select");
     const runSelectorDiv = modal.querySelector("#cmd-inspector-run-selector");
     const nodeRunSelect = modal.querySelector("#cmd-node-run-select");
     const contentDiv = modal.querySelector("#cmd-inspector-content");
@@ -550,7 +581,9 @@ const CmdDebuggerMainModal = {
     if (extraInfo && extraInfo.isHanging) {
       const items = extraInfo.hangings && extraInfo.hangings.length > 0 ? extraInfo.hangings : [extraInfo];
       titleElem.innerText = items.length === 1 ? `Unresolved: ${items[0].address || items[0].rawAddress}` : `${items.length} Unresolved Outbounds`;
-      runSelectorDiv.style.display = "none";
+      if (parentFlowSelectorDiv) parentFlowSelectorDiv.style.display = "none";
+      if (parentInstanceSelectorDiv) parentInstanceSelectorDiv.style.display = "none";
+      if (runSelectorDiv) runSelectorDiv.style.display = "none";
 
       const itemsHtml = items
         .map(
@@ -578,36 +611,37 @@ const CmdDebuggerMainModal = {
 
     // Handle Static Design-Time Architecture Inspection
     if (this.state.viewMode === "static" && !extraInfo?.isHanging) {
+      if (parentFlowSelectorDiv) parentFlowSelectorDiv.style.display = "none";
+      if (parentInstanceSelectorDiv) parentInstanceSelectorDiv.style.display = "none";
       if (runSelectorDiv) runSelectorDiv.style.display = "none";
 
       const flowDisplayName = (store ? store.getArtifactName(nodeId) : "") || nodeId;
       titleElem.innerText = flowDisplayName;
       titleElem.title = `Technical ID: ${nodeId}`;
 
+      const model = this.state.staticTopologyData?.nodes?.find((n) => n.id === nodeId) || {};
+      const desc = model.description || "No description provided in iFlow bundle.";
+
       contentDiv.innerHTML = `
-        <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #475569;">
-          <div style="font-weight: bold; font-size: 0.95rem; color: #1e293b; margin-bottom: 2px;">${escapeHtml(flowDisplayName)}</div>
-          <div style="font-size: 0.78rem; font-family: monospace; color: #64748b;">Technical ID: ${escapeHtml(nodeId)}</div>
-          <div style="font-size: 0.8rem; color: #94a3b8; margin-top: 14px; text-align: center;">
-            Static design-time architecture node. Switch to <b>Runtime Path</b> to inspect execution traces and payloads.
-          </div>
+        <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px;">
+          <div style="font-weight: bold; font-size: 0.95rem; color: #1e293b; margin-bottom: 6px;">${escapeHtml(flowDisplayName)}</div>
+          <div style="font-size: 0.8rem; color: #64748b; margin-bottom: 12px;">Technical ID: <code>${escapeHtml(nodeId)}</code></div>
+          <div style="font-size: 0.84rem; color: #334155; line-height: 1.4;">${escapeHtml(desc)}</div>
         </div>
       `;
       this.renderCurrentView();
       return;
     }
 
-    const humanName =
-      logsForNode[0]?.IntegrationArtifact?.Name ||
-      logsForNode[0]?.IntegrationFlowName ||
-      (store ? store.getArtifactName(nodeId) : "") ||
-      nodeId;
+    const humanName = logsForNode[0]?.IntegrationArtifact?.Name || logsForNode[0]?.IntegrationFlowName || (store ? store.getArtifactName(nodeId) : "") || nodeId;
 
     titleElem.innerText = humanName;
     titleElem.title = `Technical ID: ${nodeId}`;
 
     if (!logsForNode || logsForNode.length === 0) {
-      runSelectorDiv.style.display = "none";
+      if (parentFlowSelectorDiv) parentFlowSelectorDiv.style.display = "none";
+      if (parentInstanceSelectorDiv) parentInstanceSelectorDiv.style.display = "none";
+      if (runSelectorDiv) runSelectorDiv.style.display = "none";
       contentDiv.innerHTML = `
         <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #64748b; text-align: center;">
           <div style="font-weight: bold; margin-bottom: 4px;">Not Executed in This Run</div>
@@ -617,29 +651,50 @@ const CmdDebuggerMainModal = {
       return;
     }
 
-    this.state.selectedNodeRunIndex = 0;
+    // Identify current node metadata prepared by pdDiscoveryEngine
+    const currentNode = (this.state.topologyData?.nodes || []).find((n) => n.id === nodeId);
+    const parentInstances = currentNode?.parentInstances || [];
+    const parentFlows = currentNode?.parentFlows || [];
+    const rootTriggerCount = currentNode?.rootTriggerRunsCount || 0;
 
-    if (logsForNode.length > 1) {
-      runSelectorDiv.style.display = "block";
+    // Helper: Populates Dropdown 3 (Child Run Instances)
+    const populateFilteredRuns = (filteredList) => {
+      if (!filteredList || filteredList.length === 0) {
+        runSelectorDiv.style.display = "none";
+        contentDiv.innerHTML = `
+          <div style="padding: 16px; background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 6px; color: #64748b; text-align: center;">
+            <div style="font-weight: bold; margin-bottom: 4px;">No Matching Runs</div>
+            <div style="font-size: 0.8rem;">No runs found for the selected parent instance.</div>
+          </div>`;
+        return;
+      }
+
+      if (filteredList.length > 1 || parentInstances.length > 1 || parentFlows.length > 1) {
+        runSelectorDiv.style.display = "flex";
+      } else {
+        runSelectorDiv.style.display = "none";
+      }
+
       nodeRunSelect.innerHTML = "";
-      logsForNode.forEach((l, idx) => {
+      filteredList.forEach((l, idx) => {
         const opt = document.createElement("option");
         const runId = l.MessageGuid || l.Id || "";
-        const parseMs = (dt) => {
-          if (utils && utils.parseMs) return utils.parseMs(dt);
-          const match = String(dt).match(/\d+/);
-          return match ? parseInt(match[0], 10) : new Date(dt).getTime() || 0;
-        };
-        const s = parseMs(l.LogStart);
-        const e = parseMs(l.LogEnd);
-        const durMs = (s && e && e >= s) ? (e - s) : Number(l.Duration || 0);
+        const s = utils.parseMs ? utils.parseMs(l.LogStart) : 0;
+        const e = utils.parseMs ? utils.parseMs(l.LogEnd) : 0;
+        const durMs = s && e && e >= s ? e - s : Number(l.Duration || 0);
         const durStr = utils && utils.formatDuration ? utils.formatDuration(durMs) : `${durMs}ms`;
 
-        opt.value = String(idx);
+        // Find index in original logsForNode array
+        const originalIndex = logsForNode.indexOf(l);
+        opt.value = String(originalIndex !== -1 ? originalIndex : idx);
         opt.textContent = `Run #${idx + 1} | ${durStr} | ${l.Status || "COMPLETED"}${runId ? ` | ID: ${runId}` : ""}`;
         nodeRunSelect.appendChild(opt);
       });
-      nodeRunSelect.value = "0";
+
+      nodeRunSelect.value = nodeRunSelect.options[0]?.value || "0";
+      const initialSelectedIdx = parseInt(nodeRunSelect.value, 10);
+      CmdDebuggerMainModal.state.selectedNodeRunIndex = initialSelectedIdx;
+
       nodeRunSelect.onchange = () => {
         const selectedIdx = parseInt(nodeRunSelect.value, 10);
         CmdDebuggerMainModal.state.selectedNodeRunIndex = selectedIdx;
@@ -647,13 +702,97 @@ const CmdDebuggerMainModal = {
           stepInspector.inspectStepDetails(contentDiv, logsForNode[selectedIdx]);
         }
       };
+
+      if (stepInspector && logsForNode[initialSelectedIdx]) {
+        stepInspector.inspectStepDetails(contentDiv, logsForNode[initialSelectedIdx]);
+      }
+    };
+
+    // Helper: Populates Dropdown 2 (Parent Instances for a selected Parent Flow)
+    const updateParentInstanceDropdown = (selectedParentFlowId) => {
+      let availableInstances = parentInstances;
+      if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+        availableInstances = parentInstances.filter((p) => p.callerFlowId === selectedParentFlowId);
+      } else if (selectedParentFlowId === "ROOT_TRIGGER") {
+        availableInstances = [];
+      }
+
+      if (availableInstances.length > 1) {
+        parentInstanceSelectorDiv.style.display = "flex";
+        nodeParentInstanceSelect.innerHTML = "";
+
+        const allInstOpt = document.createElement("option");
+        allInstOpt.value = "ALL";
+        allInstOpt.textContent = `All Parent Instances (${availableInstances.length})`;
+        nodeParentInstanceSelect.appendChild(allInstOpt);
+
+        availableInstances.forEach((pInst) => {
+          const opt = document.createElement("option");
+          opt.value = pInst.callerGuid;
+          opt.textContent = pInst.fullLabel || pInst.label;
+          nodeParentInstanceSelect.appendChild(opt);
+        });
+
+        nodeParentInstanceSelect.value = "ALL";
+        nodeParentInstanceSelect.onchange = () => {
+          const chosenGuid = nodeParentInstanceSelect.value;
+          let filtered = logsForNode;
+          if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+            filtered = filtered.filter((r) => r._callerFlowId === selectedParentFlowId);
+          }
+          if (chosenGuid !== "ALL") {
+            filtered = filtered.filter((r) => r._callerMessageGuid === chosenGuid);
+          }
+          populateFilteredRuns(filtered);
+        };
+      } else {
+        parentInstanceSelectorDiv.style.display = "none";
+      }
+
+      // Initial filter on parent flow change
+      let filtered = logsForNode;
+      if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+        filtered = filtered.filter((r) => r._callerFlowId === selectedParentFlowId);
+      } else if (selectedParentFlowId === "ROOT_TRIGGER") {
+        filtered = filtered.filter((r) => !r._callerFlowId && !r._callerMessageGuid);
+      }
+      populateFilteredRuns(filtered);
+    };
+
+    // Configure Dropdown 1 (Parent Flow Selector)
+    const showParentFlowDropdown = parentFlows.length > 1 || (parentFlows.length > 0 && rootTriggerCount > 0);
+    if (showParentFlowDropdown) {
+      parentFlowSelectorDiv.style.display = "flex";
+      nodeParentFlowSelect.innerHTML = `<option value="ALL">All Parent Flows (${logsForNode.length} total runs)</option>`;
+
+      parentFlows.forEach((pFlow) => {
+        const opt = document.createElement("option");
+        opt.value = pFlow.flowId;
+        opt.textContent = `${pFlow.flowName} (${pFlow.childRunsCount} run${pFlow.childRunsCount === 1 ? "" : "s"})`;
+        nodeParentFlowSelect.appendChild(opt);
+      });
+
+      if (rootTriggerCount > 0) {
+        const opt = document.createElement("option");
+        opt.value = "ROOT_TRIGGER";
+        opt.textContent = `[Root Trigger] Executed directly (${rootTriggerCount} runs)`;
+        nodeParentFlowSelect.appendChild(opt);
+      }
+
+      nodeParentFlowSelect.value = "ALL";
+      nodeParentFlowSelect.onchange = () => {
+        updateParentInstanceDropdown(nodeParentFlowSelect.value);
+      };
     } else {
-      runSelectorDiv.style.display = "none";
+      parentFlowSelectorDiv.style.display = "none";
     }
 
-    if (stepInspector) {
-      await stepInspector.inspectStepDetails(contentDiv, logsForNode[0]);
-    }
+    // Initialize with all parent flows or the single parent flow
+    const initialParentFlowId = parentFlows.length === 1 ? parentFlows[0].flowId : "ALL";
+    updateParentInstanceDropdown(initialParentFlowId);
+
+    // Initially populate with all runs
+    populateFilteredRuns(logsForNode);
 
     this.renderCurrentView();
   },
