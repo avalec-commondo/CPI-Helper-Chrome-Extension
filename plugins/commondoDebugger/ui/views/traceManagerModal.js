@@ -270,11 +270,21 @@ const CmdTraceManagerModal = {
 
     if (selNoneBtn) {
       selNoneBtn.onclick = () => {
-        savedChecked.clear();
-        listDiv.querySelectorAll(".cmd-flow-checkbox").forEach((cb) => {
-          cb.checked = false;
-          cb.closest("label").style.backgroundColor = "#fff";
-        });
+        const isSearching = Boolean(searchInput && searchInput.value.trim());
+        if (isSearching) {
+          listDiv.querySelectorAll(".cmd-flow-checkbox").forEach((cb) => {
+            const id = cb.getAttribute("data-iflow-id");
+            savedChecked.delete(id);
+            cb.checked = false;
+            cb.closest("label").style.backgroundColor = "#fff";
+          });
+        } else {
+          savedChecked.clear();
+          listDiv.querySelectorAll(".cmd-flow-checkbox").forEach((cb) => {
+            cb.checked = false;
+            cb.closest("label").style.backgroundColor = "#fff";
+          });
+        }
         updateCount();
       };
     }

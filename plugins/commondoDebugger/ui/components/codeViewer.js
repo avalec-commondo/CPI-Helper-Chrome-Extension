@@ -39,18 +39,47 @@ const CmdCodeViewer = {
   },
 
   /**
-   * Simple XML string indenter.
+   * XML string indenter supporting namespaces, declarations, comments, and CDATA.
    */
   formatXml(xml) {
-    let formatted = "";
-    let indent = "";
-    const tab = "  ";
-    xml.split(/>\s*</).forEach((node) => {
-      if (node.match(/^\/\w/)) indent = indent.substring(tab.length);
-      formatted += indent + "<" + node + ">\r\n";
-      if (node.match(/^<?\w[^>]*[^\/]$/)) indent += tab;
-    });
-    return formatted.substring(1, formatted.length - 3);
+    if (!xml || typeof xml !== "string") return xml || "";
+    try {
+      const tab = "  ";
+      let formatted = xml.replace(/(>)(<)(\/*)/g, "$1\r\n$2$3");
+      let pad = 0;
+      return formatted
+        .split("\r\n")
+        .map((line) => {
+          const node = line.trim();
+          if (!node) return "";
+          let indent = 0;
+
+          if (node.match(/^<[?!]/)) {
+            // XML declaration, comment, or CDATA
+            indent = 0;
+          } else if (node.match(/^<[\w:.-]+[^>]*>.*<\/[\w:.-]+>$/)) {
+            // Line with both opening and closing tag, e.g. <name>Value</name>
+            indent = 0;
+          } else if (node.match(/^<\/[\w:.-]+>/)) {
+            // Closing tag, e.g. </root> or </ns2:Order>
+            if (pad > 0) pad -= 1;
+          } else if (node.match(/^<[\w:.-]+[^>]*\/>$/)) {
+            // Self-closing tag, e.g. <item id="1" />
+            indent = 0;
+          } else if (node.match(/^<[\w:.-]+(?: [^>]*)?>/)) {
+            // Opening tag, e.g. <root> or <ns2:Order id="123">
+            indent = 1;
+          }
+
+          const paddedLine = tab.repeat(Math.max(0, pad)) + node;
+          pad += indent;
+          return paddedLine;
+        })
+        .filter(Boolean)
+        .join("\n");
+    } catch (e) {
+      return xml;
+    }
   },
 
   /**

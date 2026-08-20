@@ -150,14 +150,20 @@ const CmdStateStore = {
 
   setCachedBpmnModel(iflowId, model) {
     if (iflowId && model) {
-      // LRU eviction cap: 100 models
+      // Remove existing keys first for clean LRU ordering
+      bpmnModelCache.delete(iflowId);
+      bpmnModelCache.delete(iflowId.toLowerCase());
+
+      // LRU eviction cap: 100 entries
       while (bpmnModelCache.size >= 100) {
         const oldestKey = bpmnModelCache.keys().next().value;
         if (oldestKey !== undefined) bpmnModelCache.delete(oldestKey);
         else break;
       }
       bpmnModelCache.set(iflowId, model);
-      bpmnModelCache.set(iflowId.toLowerCase(), model);
+      if (iflowId.toLowerCase() !== iflowId) {
+        bpmnModelCache.set(iflowId.toLowerCase(), model);
+      }
     }
   },
 

@@ -32,6 +32,7 @@ const CmdTestEndpointRunner = {
     const results = [];
 
     async function runMethodTest(num, name, fn) {
+      const testName = `${num}. ${name}`;
       const startTime = Date.now();
       try {
         const data = await fn();
@@ -245,7 +246,7 @@ const CmdTestEndpointRunner = {
       </div>
     `;
 
-    document.body.appendChild(modal);
+    (typeof body === "function" ? body() : document.body).appendChild(modal);
 
     modal.querySelector("#__cmd_api_modal_close").onclick = () => modal.remove();
     modal.querySelector("#__cmd_api_modal_retest").onclick = () => this.runAllTests();

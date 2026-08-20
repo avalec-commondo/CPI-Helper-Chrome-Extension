@@ -262,6 +262,7 @@ const CmdPdDiscoveryEngine = {
 
       const outEdges = edges.filter((e) => e.from === curr);
       outEdges.forEach((e) => {
+        if (e.to === root) return; // Root is strictly locked at level 0 (breaks cyclic graph overwrites)
         const nextLevel = currLevel + 1;
         if (nodeLevels[e.to] === undefined || nextLevel > nodeLevels[e.to]) {
           nodeLevels[e.to] = nextLevel;
@@ -274,6 +275,7 @@ const CmdPdDiscoveryEngine = {
       if (nodeLevels[id] === undefined) nodeLevels[id] = 1;
     });
 
+    nodeLevels[root] = 0;
     return nodeLevels;
   },
 

@@ -43,7 +43,8 @@ const CmdTraceService = {
       });
 
       const tracedSteps = steps.filter((s) => (s.TraceCount && parseInt(s.TraceCount, 10) > 0) || s.ChildCount !== undefined);
-      const poolFn = utils && utils.asyncPool ? utils.asyncPool.bind(utils) : (limit, arr, fn) => Promise.all(arr.map(fn));
+      const utils = typeof CmdUtils !== "undefined" ? CmdUtils : null;
+    const poolFn = utils && utils.asyncPool ? utils.asyncPool.bind(utils) : (limit, arr, fn) => Promise.all(arr.map(fn));
 
       await poolFn(16, tracedSteps, async (step) => {
         try {
