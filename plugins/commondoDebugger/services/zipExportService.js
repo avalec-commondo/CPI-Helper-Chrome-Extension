@@ -75,6 +75,10 @@ const CmdZipExportService = {
           runsCount: n.runsCount || (n.runs ? n.runs.length : 0),
           totalDuration: n.totalDuration || 0,
           hanging: n.hanging || [],
+          parentInstances: n.parentInstances || [],
+          parentFlows: n.parentFlows || [],
+          rootTriggerRunsCount: n.rootTriggerRunsCount || 0,
+          hasMultipleParentOptions: Boolean(n.hasMultipleParentOptions),
         })),
         edges: topologyData.edges || [],
         levels: topologyData.levels || {},
@@ -105,6 +109,10 @@ const CmdZipExportService = {
         status: node.status || "COMPLETED",
         runsCount: flowRuns.length,
         totalDuration: node.totalDuration || 0,
+        parentInstances: node.parentInstances || [],
+        parentFlows: node.parentFlows || [],
+        rootTriggerRunsCount: node.rootTriggerRunsCount || 0,
+        hasMultipleParentOptions: Boolean(node.hasMultipleParentOptions),
         runs: new Array(flowRuns.length),
       };
 
@@ -141,6 +149,9 @@ const CmdZipExportService = {
           logStart: run.LogStart,
           logEnd: run.LogEnd,
           duration,
+          _callerFlowId: run._callerFlowId || run.callerFlowId || "",
+          _callerMessageGuid: run._callerMessageGuid || run.PredecessorMessageGuid || "",
+          predecessorMessageGuid: run.PredecessorMessageGuid || "",
           errorInformation: null,
           steps: [],
         };
@@ -408,4 +419,7 @@ if (typeof window !== "undefined") {
 }
 if (typeof global !== "undefined") {
   global.CmdZipExportService = CmdZipExportService;
+}
+if (typeof module !== "undefined" && module.exports) {
+  module.exports = CmdZipExportService;
 }

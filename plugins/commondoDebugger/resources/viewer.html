@@ -29,7 +29,8 @@
     #inspector { flex: 9; min-width: 320px; max-width: 480px; display: flex; flex-direction: column; background: #ffffff; border-left: 1px solid #e2e8f0; }
     #inspector-header { padding: 12px 14px; background: #f1f5f9; border-bottom: 1px solid #e2e8f0; display: flex; flex-direction: column; gap: 8px; flex-shrink: 0; }
     #inspector-title { font-size: 0.92rem; font-weight: 700; color: #1e293b; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-    #run-select { width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; }
+    #run-select, #parent-flow-select, #parent-instance-select { width: 100%; padding: 5px 8px; font-size: 0.78rem; border-radius: 4px; border: 1px solid #cbd5e1; background: #ffffff; color: #1e293b; }
+    #run-select:focus, #parent-flow-select:focus, #parent-instance-select:focus { border-color: #0284c7; outline: none; }
     
     /* Step List */
     #step-list-container { flex: 1; overflow-y: auto; padding: 12px; }
@@ -87,8 +88,23 @@
     <div id="inspector">
       <div id="inspector-header">
         <div id="inspector-title">Select an iFlow on the left to inspect steps</div>
-        <div id="run-selector-container" style="display:none;">
-          <select id="run-select" onchange="onRunChanged()"></select>
+        
+        <!-- Dropdown 1: Parent Flow Filter -->
+        <div id="parent-flow-selector-container" style="display:none; flex-direction:column; gap:3px;">
+          <label style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Parent Flow Filter</label>
+          <select id="parent-flow-select"></select>
+        </div>
+
+        <!-- Dropdown 2: Parent Run Instance -->
+        <div id="parent-instance-selector-container" style="display:none; flex-direction:column; gap:3px;">
+          <label style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">Parent Run Instance</label>
+          <select id="parent-instance-select"></select>
+        </div>
+
+        <!-- Dropdown 3: iFlow Run Instance -->
+        <div id="run-selector-container" style="display:none; flex-direction:column; gap:3px;">
+          <label id="run-select-label" style="font-size:0.7rem; font-weight:700; color:#64748b; text-transform:uppercase;">iFlow Run Instance</label>
+          <select id="run-select"></select>
         </div>
       </div>
       <div id="step-list-container">
@@ -548,45 +564,197 @@
       const flowRecord = traceData.flows?.[flowId];
       if (!flowRecord) return;
 
-      document.getElementById("inspector-title").innerText = flowRecord.displayName || flowId;
+      document.getElementById("inspector-title").innerText = flowRecord.displayName || flowRecord.name || flowId;
 
-      const runs = flowRecord.runs || [];
+      const allRuns = flowRecord.runs || [];
+      const parentFlowDiv = document.getElementById("parent-flow-selector-container");
+      const parentFlowSelect = document.getElementById("parent-flow-select");
+      const parentInstDiv = document.getElementById("parent-instance-selector-container");
+      const parentInstSelect = document.getElementById("parent-instance-select");
       const runSelectorDiv = document.getElementById("run-selector-container");
       const runSelect = document.getElementById("run-select");
 
-      if (runs.length > 1) {
-        runSelectorDiv.style.display = "block";
-        runSelect.innerHTML = "";
-        runs.forEach((r, idx) => {
-          const opt = document.createElement("option");
-          opt.value = idx;
-          const durMs = getRunDuration(r);
-          const dur = `${durMs}ms`;
-          const details = [dur, r.status].filter(Boolean).join(" | ");
-          opt.textContent = `Run #${idx + 1} (${details})`;
-          runSelect.appendChild(opt);
-        });
-        runSelect.value = "0";
-      } else {
+      if (allRuns.length === 0) {
+        parentFlowDiv.style.display = "none";
+        parentInstDiv.style.display = "none";
         runSelectorDiv.style.display = "none";
+        renderSteps(null);
+        return;
       }
 
-      renderSteps(runs[0]);
-    }
+      // Group parent flows & parent run instances
+      const parentFlowMap = new Map();
+      const parentInstanceMap = new Map();
+      let rootTriggerCount = 0;
 
-    function onRunChanged() {
-      const idx = parseInt(document.getElementById("run-select").value, 10) || 0;
-      selectedRunIndex = idx;
-      const flowRecord = traceData.flows?.[selectedFlowId];
-      if (flowRecord && flowRecord.runs[idx]) {
-        renderSteps(flowRecord.runs[idx]);
+      allRuns.forEach((r) => {
+        const callerFlowId = r._callerFlowId || r.callerFlowId || "";
+        const callerGuid = r._callerMessageGuid || r.predecessorMessageGuid || r.callerGuid || "";
+
+        if (callerFlowId) {
+          if (!parentFlowMap.has(callerFlowId)) {
+            const parentFlowRecord = traceData.flows?.[callerFlowId];
+            const pName = parentFlowRecord?.displayName || parentFlowRecord?.name || callerFlowId;
+            parentFlowMap.set(callerFlowId, { flowId: callerFlowId, flowName: pName, childRunsCount: 0 });
+          }
+          parentFlowMap.get(callerFlowId).childRunsCount += 1;
+
+          if (callerGuid) {
+            if (!parentInstanceMap.has(callerGuid)) {
+              let parentRunLabel = "";
+              const parentFlowRecord = traceData.flows?.[callerFlowId];
+              if (parentFlowRecord && parentFlowRecord.runs) {
+                const pRunIdx = parentFlowRecord.runs.findIndex((pr) => (pr.messageGuid || pr.MessageGuid) === callerGuid);
+                if (pRunIdx !== -1) {
+                  const pRun = parentFlowRecord.runs[pRunIdx];
+                  const pDur = getRunDuration(pRun);
+                  parentRunLabel = `Parent Run #${pRunIdx + 1} (${pDur}ms | ${pRun.status || "COMPLETED"})`;
+                }
+              }
+              if (!parentRunLabel) {
+                parentRunLabel = `Parent Run: ${callerGuid.slice(0, 8)}...`;
+              }
+
+              const pName = parentFlowMap.get(callerFlowId).flowName;
+              parentInstanceMap.set(callerGuid, {
+                callerFlowId,
+                callerGuid,
+                label: parentRunLabel,
+                fullLabel: `${pName} \u2794 ${parentRunLabel}`,
+              });
+            }
+          }
+        } else {
+          rootTriggerCount += 1;
+        }
+      });
+
+      const parentFlows = Array.from(parentFlowMap.values());
+      const parentInstances = Array.from(parentInstanceMap.values());
+
+      function populateFilteredRuns(filteredRuns) {
+        if (!filteredRuns || filteredRuns.length === 0) {
+          runSelectorDiv.style.display = "none";
+          renderSteps(null);
+          return;
+        }
+
+        if (filteredRuns.length > 1 || parentFlows.length > 1 || parentInstances.length > 1) {
+          runSelectorDiv.style.display = "flex";
+          runSelect.innerHTML = "";
+          filteredRuns.forEach((r, idx) => {
+            const opt = document.createElement("option");
+            const originalIndex = allRuns.indexOf(r);
+            opt.value = String(originalIndex !== -1 ? originalIndex : idx);
+            const durMs = getRunDuration(r);
+            const dur = `${durMs}ms`;
+            const details = [dur, r.status].filter(Boolean).join(" | ");
+            const shortGuid = (r.messageGuid || "").slice(0, 8);
+            opt.textContent = `Run #${idx + 1} (${details})${shortGuid ? ` | ID: ${shortGuid}` : ""}`;
+            runSelect.appendChild(opt);
+          });
+          runSelect.value = runSelect.options[0]?.value || "0";
+        } else {
+          runSelectorDiv.style.display = "none";
+        }
+
+        const selectedOriginalIdx = parseInt(runSelect.value, 10) || 0;
+        selectedRunIndex = selectedOriginalIdx;
+        renderSteps(allRuns[selectedOriginalIdx] || filteredRuns[0]);
       }
+
+      runSelect.onchange = () => {
+        const selectedOriginalIdx = parseInt(runSelect.value, 10) || 0;
+        selectedRunIndex = selectedOriginalIdx;
+        renderSteps(allRuns[selectedOriginalIdx]);
+      };
+
+      function updateParentInstanceDropdown(selectedParentFlowId) {
+        let availableInstances = parentInstances;
+        if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+          availableInstances = parentInstances.filter((p) => p.callerFlowId === selectedParentFlowId);
+        } else if (selectedParentFlowId === "ROOT_TRIGGER") {
+          availableInstances = [];
+        }
+
+        if (availableInstances.length > 1) {
+          parentInstDiv.style.display = "flex";
+          parentInstSelect.innerHTML = "";
+          const allInstOpt = document.createElement("option");
+          allInstOpt.value = "ALL";
+          allInstOpt.textContent = `All Parent Instances (${availableInstances.length})`;
+          parentInstSelect.appendChild(allInstOpt);
+
+          availableInstances.forEach((pInst) => {
+            const opt = document.createElement("option");
+            opt.value = pInst.callerGuid;
+            opt.textContent = pInst.fullLabel || pInst.label;
+            parentInstSelect.appendChild(opt);
+          });
+
+          parentInstSelect.value = "ALL";
+          parentInstSelect.onchange = () => {
+            const chosenGuid = parentInstSelect.value;
+            let filtered = allRuns;
+            if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+              filtered = filtered.filter((r) => (r._callerFlowId || r.callerFlowId) === selectedParentFlowId);
+            }
+            if (chosenGuid !== "ALL") {
+              filtered = filtered.filter((r) => (r._callerMessageGuid || r.predecessorMessageGuid || r.callerGuid) === chosenGuid);
+            }
+            populateFilteredRuns(filtered);
+          };
+        } else {
+          parentInstDiv.style.display = "none";
+        }
+
+        let filtered = allRuns;
+        if (selectedParentFlowId && selectedParentFlowId !== "ALL" && selectedParentFlowId !== "ROOT_TRIGGER") {
+          filtered = filtered.filter((r) => (r._callerFlowId || r.callerFlowId) === selectedParentFlowId);
+        } else if (selectedParentFlowId === "ROOT_TRIGGER") {
+          filtered = filtered.filter((r) => !r._callerFlowId && !r.callerFlowId && !r._callerMessageGuid && !r.predecessorMessageGuid);
+        }
+        populateFilteredRuns(filtered);
+      }
+
+      // Configure Parent Flow Dropdown
+      const showParentFlowDropdown = parentFlows.length > 1 || (parentFlows.length > 0 && rootTriggerCount > 0);
+      if (showParentFlowDropdown) {
+        parentFlowDiv.style.display = "flex";
+        parentFlowSelect.innerHTML = `<option value="ALL">All Parent Flows (${allRuns.length} total runs)</option>`;
+
+        parentFlows.forEach((pFlow) => {
+          const opt = document.createElement("option");
+          opt.value = pFlow.flowId;
+          opt.textContent = `${pFlow.flowName} (${pFlow.childRunsCount} run${pFlow.childRunsCount === 1 ? "" : "s"})`;
+          parentFlowSelect.appendChild(opt);
+        });
+
+        if (rootTriggerCount > 0) {
+          const opt = document.createElement("option");
+          opt.value = "ROOT_TRIGGER";
+          opt.textContent = `[Root Trigger] Executed directly (${rootTriggerCount} runs)`;
+          parentFlowSelect.appendChild(opt);
+        }
+
+        parentFlowSelect.value = "ALL";
+        parentFlowSelect.onchange = () => {
+          updateParentInstanceDropdown(parentFlowSelect.value);
+        };
+      } else {
+        parentFlowDiv.style.display = "none";
+      }
+
+      const initialParentFlowId = parentFlows.length === 1 ? parentFlows[0].flowId : "ALL";
+      updateParentInstanceDropdown(initialParentFlowId);
     }
 
     function inspectHanging(hangingNode) {
       const container = document.getElementById("step-list-container");
       const count = hangingNode.count || (hangingNode.hangings ? hangingNode.hangings.length : 1);
       document.getElementById("inspector-title").innerText = `Unresolved: ${count} Outbound${count === 1 ? "" : "s"}`;
+      document.getElementById("parent-flow-selector-container").style.display = "none";
+      document.getElementById("parent-instance-selector-container").style.display = "none";
       document.getElementById("run-selector-container").style.display = "none";
 
       const list = hangingNode.hangings || [hangingNode];
@@ -621,17 +789,22 @@
       // 1. Run Time and Summary Box
       const durMs = getRunDuration(runRecord);
       const durStr = `${durMs}ms`;
+      const callerFlowId = runRecord._callerFlowId || runRecord.callerFlowId || "";
 
       const runSummaryBox = document.createElement("div");
-      runSummaryBox.style.cssText = "display:flex; justify-content:space-between; align-items:center; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:10px; font-size:0.78rem; color:#475569;";
+      runSummaryBox.style.cssText = "display:flex; flex-direction:column; gap:4px; padding:8px 12px; background:#f8fafc; border:1px solid #e2e8f0; border-radius:6px; margin-bottom:10px; font-size:0.78rem; color:#475569;";
       runSummaryBox.innerHTML = `
-        <div>
-          <span style="font-weight:700; color:#1e293b;">Run #${(selectedRunIndex || 0) + 1}</span>
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <span style="font-weight:700; color:#1e293b;">Run #${(selectedRunIndex || 0) + 1}</span>
+            ${callerFlowId ? `<span style="margin-left:6px; background:#e0e7ff; color:#3730a3; padding:1px 6px; border-radius:4px; font-size:0.68rem; font-weight:600;">Parent: ${escapeHtml(callerFlowId)}</span>` : `<span style="margin-left:6px; background:#ecfdf5; color:#065f46; padding:1px 6px; border-radius:4px; font-size:0.68rem; font-weight:600;">Root Trigger</span>`}
+          </div>
+          <div style="display:flex; align-items:center; gap:8px;">
+            <span style="font-weight:bold; color:#0284c7; font-family:monospace;">${durStr}</span>
+            <span style="background:${runRecord.status === 'FAILED' ? '#fee2e2' : '#dcfce7'}; color:${runRecord.status === 'FAILED' ? '#991b1b' : '#166534'}; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold;">${escapeHtml(runRecord.status || 'COMPLETED')}</span>
+          </div>
         </div>
-        <div style="display:flex; align-items:center; gap:8px;">
-          <span style="font-weight:bold; color:#0284c7; font-family:monospace;">${durStr}</span>
-          <span style="background:${runRecord.status === 'FAILED' ? '#fee2e2' : '#dcfce7'}; color:${runRecord.status === 'FAILED' ? '#991b1b' : '#166534'}; padding:2px 6px; border-radius:4px; font-size:0.7rem; font-weight:bold;">${escapeHtml(runRecord.status || 'COMPLETED')}</span>
-        </div>
+        ${runRecord.messageGuid ? `<div style="font-size:0.7rem; font-family:monospace; color:#94a3b8; word-break:break-all;">GUID: ${escapeHtml(runRecord.messageGuid)}</div>` : ""}
       `;
       container.appendChild(runSummaryBox);
 
